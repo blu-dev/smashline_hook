@@ -1,5 +1,5 @@
 [package]
-name = "skyline_rs_template"
+name = "smashline_hook"
 version = "0.1.0"
 authors = ["jam1garner <jam1.mcleod@hotmail.com>"]
 edition = "2018"
@@ -11,8 +11,11 @@ titleid = "01006A800016E000"
 crate-type = ["cdylib"]
 
 [dependencies]
-skyline = { git = "https://github.com/ultimate-research/skyline-rs.git" }
+skyline = { git = "https://github.com/ultimate-research/skyline-rs.git", features = ["nro_internal"] }
 skyline_smash = { git = "https://github.com/ultimate-research/skyline-smash.git" }
+nnsdk = { git = "https://github.com/ultimate-research/nnsdk-rs" }
+parking_lot = { version = "0.11.1", features = ["nightly"] }
+lazy_static = "1.4.0"
 
 [profile.dev]
 panic = "abort"
@@ -20,3 +23,6 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 lto = true
+
+[features]
+standalone = []
