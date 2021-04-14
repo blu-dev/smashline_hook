@@ -11,8 +11,9 @@ use skyline::{hook, install_hook};
 
 mod hooks;
 mod nro_hook;
-mod rtld;
 mod nx;
+mod rtld;
+mod unwind;
 
 // I've copy pasted this from jugeeya so much
 #[macro_export]
@@ -36,4 +37,6 @@ pub fn main() {
     nro_hook::install();
     nro_hook::add_nro_load_hook(hooks::nro_load);
     nro_hook::add_nro_unload_hook(hooks::nro_unload);
+
+    unwind::install();
 }

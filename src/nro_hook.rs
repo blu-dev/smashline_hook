@@ -77,6 +77,7 @@ pub fn add_nro_unload_hook(callback: Callback) {
     }
 }
 
+#[cfg(feature = "standalone")]
 pub fn install() {
     if cfg!(feature = "standalone") {
         skyline::install_hooks!(
@@ -85,3 +86,6 @@ pub fn install() {
         );
     }
 }
+
+#[cfg(not(feature = "standalone"))]
+pub fn install() {}
