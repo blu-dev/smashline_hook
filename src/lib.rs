@@ -1,11 +1,18 @@
 #![feature(proc_macro_hygiene)]
+#![feature(asm)]
 #![allow(unused_imports)]
+
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate bitflags;
 
 use skyline::{hook, install_hook};
 
 mod hooks;
 mod nro_hook;
 mod rtld;
+mod nx;
 
 // I've copy pasted this from jugeeya so much
 #[macro_export]
@@ -15,29 +22,18 @@ macro_rules! c_str {
     }
 }
 
-extern "C" fn test() -> u32 {
-    2
-}
+static mut ORIGINAL: *const extern "C" fn() -> bool = 0 as _;
 
-#[hook(replace = test)]
-fn test_replacement() -> u32 {
-
-    let original_test = original!();
-
-    let val = original_test();
-
-    println!("[override] original value: {}", val); // 2
-
-    val + 1
+unsafe extern "C" fn realloc_hook() -> bool {
+    let callable: extern "C" fn() -> bool = std::mem::transmute(ORIGINAL);
+    let ret = callable();
+    println!("{}", ret);
+    ret
 }
 
 #[skyline::main(name = "smashline_hook")]
 pub fn main() {
-    println!("Hello from Skyline Rust Plugin!");
-
-    install_hook!(test_replacement);
-
-    let x = test();
-
-    println!("[main] test returned: {}", x); // 3
+    nro_hook::install();
+    nro_hook::add_nro_load_hook(hooks::nro_load);
+    nro_hook::add_nro_unload_hook(hooks::nro_unload);
 }

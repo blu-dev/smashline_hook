@@ -76,3 +76,12 @@ pub fn add_nro_unload_hook(callback: Callback) {
         _ => {}
     }
 }
+
+pub fn install() {
+    if cfg!(feature = "standalone") {
+        skyline::install_hooks!(
+            handle_load_module,
+            handle_unload_module
+        );
+    }
+}
