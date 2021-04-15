@@ -50,7 +50,7 @@ pub fn nro_unload(nro_info: &NroInfo) {
     }
 }
 
-unsafe fn lazy_symbol_replace(module_object: *mut ModuleObject, symbol: &str, replace: *const extern "C" fn(), original: Option<&mut &'static mut *const extern "C" fn()>) {
+pub unsafe fn lazy_symbol_replace(module_object: *mut ModuleObject, symbol: &str, replace: *const extern "C" fn(), original: Option<&mut &'static mut *const extern "C" fn()>) {
     let sym = rtld::get_symbol_by_name(module_object, symbol);
     if sym.is_null() {
         println!("[smashline::hooks] Unable to find symbol {} to replace", symbol);

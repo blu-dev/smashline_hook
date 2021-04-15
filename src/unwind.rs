@@ -16,13 +16,11 @@ const _URC_FATAL_PHASE1_ERROR: u64 = 3;
 const _URC_HANDLER_FOUND: u64 = 6;
 const _URC_INSTALL_CONTEXT: u64 = 7;
 
-const IP_REGISTER: i32 = -1;
-
 extern "C" {
     #[link_name = "\u{1}_Unwind_GetIP"]
-    pub fn _Unwind_GetIP(context: *const u64) -> u64;
+    fn _Unwind_GetIP(context: *const u64) -> u64;
     #[link_name = "\u{1}_Unwind_SetIP"]
-    pub fn _Unwind_SetIP(context: *const u64, ip: u64);
+    fn _Unwind_SetIP(context: *const u64, ip: u64);
 }
 
 static STEP_WITH_DWARF_SEARCH_CODE: &[u8] = &[
@@ -62,7 +60,7 @@ static OFFSET_INIT: std::sync::Once = std::sync::Once::new();
 static CUSTOM_EH_MEM: Mutex<Vec<nx::QueryMemoryResult>> = Mutex::new(Vec::new());
 
 #[skyline::hook(replace = libc::abort)]
-pub fn abort_hook() -> ! {
+fn abort_hook() -> ! {
     println!("[smashline::unwind | Fatal Error] abort() has been called. Flushing logger.");
     std::thread::sleep(std::time::Duration::from_millis(500));
 
@@ -70,7 +68,7 @@ pub fn abort_hook() -> ! {
 }
 
 #[skyline::hook(replace = libc::fwrite)]
-pub fn fwrite_hook(c_str: *const libc::c_char, size: libc::size_t, count: libc::size_t, file: *mut libc::c_void) -> libc::size_t {
+fn fwrite_hook(c_str: *const libc::c_char, size: libc::size_t, count: libc::size_t, file: *mut libc::c_void) -> libc::size_t {
     unsafe {
         print!("{}", skyline::from_c_str(c_str));
     }
@@ -184,6 +182,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+#[inline(never)]
 pub fn register_skyline_plugin(addr: usize) {
     let mem_info = svc::query_memory(addr).expect("Unable to query memory for skyline plugin.");
     let mut custom_mem = CUSTOM_EH_MEM.lock();

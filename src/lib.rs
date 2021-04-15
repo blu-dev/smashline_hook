@@ -1,18 +1,24 @@
 #![feature(proc_macro_hygiene)]
 #![feature(asm)]
 #![allow(unused_imports)]
+#![feature(const_if_match)]
 
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate bitflags;
+#[macro_use]
+extern crate paste;
 
 use skyline::{hook, install_hook};
+use skyline::nro::NroInfo;
 
+mod acmd;
 mod hooks;
 mod nro_hook;
 mod nx;
 mod rtld;
+mod scripts;
 mod unwind;
 
 // I've copy pasted this from jugeeya so much
@@ -23,20 +29,21 @@ macro_rules! c_str {
     }
 }
 
-static mut ORIGINAL: *const extern "C" fn() -> bool = 0 as _;
+fn nro_load(info: &NroInfo) {
+    hooks::nro_load(info);
+    acmd::nro_load(info);
+}
 
-unsafe extern "C" fn realloc_hook() -> bool {
-    let callable: extern "C" fn() -> bool = std::mem::transmute(ORIGINAL);
-    let ret = callable();
-    println!("{}", ret);
-    ret
+fn nro_unload(info: &NroInfo) {
+    hooks::nro_unload(info);
+    acmd::nro_unload(info);
 }
 
 #[skyline::main(name = "smashline_hook")]
 pub fn main() {
     nro_hook::install();
-    nro_hook::add_nro_load_hook(hooks::nro_load);
-    nro_hook::add_nro_unload_hook(hooks::nro_unload);
+    nro_hook::add_nro_load_hook(nro_load);
+    nro_hook::add_nro_unload_hook(nro_unload);
 
     unwind::install();
 }
