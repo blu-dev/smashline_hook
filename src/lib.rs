@@ -12,14 +12,32 @@ extern crate paste;
 
 use skyline::{hook, install_hook};
 use skyline::nro::NroInfo;
+use smash::lib::LuaConst;
 
 mod acmd;
+mod callbacks;
 mod hooks;
 mod nro_hook;
 mod nx;
 mod rtld;
 mod scripts;
+mod status;
 mod unwind;
+
+#[derive(Clone)]
+pub enum LuaConstant {
+    Symbolic(LuaConst),
+    Evaluated(i32)
+}
+
+impl LuaConstant {
+    pub fn get(&self) -> i32 {
+        match self {
+            LuaConstant::Symbolic(symbolic) => **symbolic,
+            LuaConstant::Evaluated(evaluated) => *evaluated
+        }
+    }
+}
 
 // I've copy pasted this from jugeeya so much
 #[macro_export]
@@ -29,14 +47,22 @@ macro_rules! c_str {
     }
 }
 
+static CALLBACK_INSTALLER: std::sync::Once = std::sync::Once::new();
+
 fn nro_load(info: &NroInfo) {
+    // we want our callbacks to be the most priority, so we add them as late as possible
+    CALLBACK_INSTALLER.call_once(|| {
+        callbacks::install();
+    });
     hooks::nro_load(info);
     acmd::nro_load(info);
+    status::nro_load(info);
 }
 
 fn nro_unload(info: &NroInfo) {
     hooks::nro_unload(info);
     acmd::nro_unload(info);
+    status::nro_unload(info);
 }
 
 #[skyline::main(name = "smashline_hook")]
