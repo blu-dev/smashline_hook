@@ -47,19 +47,15 @@ macro_rules! c_str {
     }
 }
 
-static CALLBACK_INSTALLER: std::sync::Once = std::sync::Once::new();
-
 fn nro_load(info: &NroInfo) {
-    // we want our callbacks to be the most priority, so we add them as late as possible
-    CALLBACK_INSTALLER.call_once(|| {
-        callbacks::install();
-    });
+    callbacks::nro_load(info);   
     hooks::nro_load(info);
     acmd::nro_load(info);
     status::nro_load(info);
 }
 
 fn nro_unload(info: &NroInfo) {
+    callbacks::nro_unload(info);
     hooks::nro_unload(info);
     acmd::nro_unload(info);
     status::nro_unload(info);
@@ -70,6 +66,7 @@ pub fn main() {
     nro_hook::install();
     nro_hook::add_nro_load_hook(nro_load);
     nro_hook::add_nro_unload_hook(nro_unload);
-
+    
+    status::install();
     unwind::install();
 }
