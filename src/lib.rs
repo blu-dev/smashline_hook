@@ -17,6 +17,7 @@ use smash::lib::LuaConst;
 mod acmd;
 mod callbacks;
 mod hooks;
+mod loader;
 mod nro_hook;
 mod nx;
 mod rtld;
@@ -67,6 +68,9 @@ pub fn main() {
     nro_hook::add_nro_load_hook(nro_load);
     nro_hook::add_nro_unload_hook(nro_unload);
     
+    unsafe {
+        loader::load_development_plugin();
+    }
     status::install();
     unwind::install();
 }

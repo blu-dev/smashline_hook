@@ -57,7 +57,7 @@ pub fn nro_load(info: &NroInfo) {
         Category::ACMD_EXPRESSION
     ];
     match info.name {
-        "common" | "item" => {},
+        "common" | "item" | "" => {},
         _ => {
             for cat in CATEGORIES.iter() {
                 crate::scripts::patch_create_agent_animcmd(info, *cat);

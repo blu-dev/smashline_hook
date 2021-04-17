@@ -139,7 +139,7 @@ pub fn nro_load(info: &NroInfo) {
                 }
             }
         },
-        "item" => {},
+        "item" | "" => {},
         _ => {
             crate::scripts::patch_create_agent_status(info);
         }
