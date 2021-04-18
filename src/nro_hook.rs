@@ -20,7 +20,14 @@ fn handle_load_module(
     _flag: i32
 ) -> i32 {
     let ret = call_original!(out_module, image, buffer, buffer_size, nn::ro::BindFlag_BindFlag_Now as i32); // no lazy binding
-    let name = unsafe { skyline::from_c_str(&out_module.Name as *const u8) };
+    let name = unsafe { 
+        let c_str = &out_module.Name as *const _;
+        let name_slice = core::slice::from_raw_parts(c_str, libc::strlen(c_str));
+        match core::str::from_utf8(&name_slice) {
+            Ok(v) => v.to_owned(),
+            Err(e) => String::from("")
+        }
+    };
     if ret != 0 {
         println!("[smashline::nro_hook] nn::ro::LoadModule failed for module '{}'. Result code {:#x}", name, ret);
     } else {
@@ -36,7 +43,14 @@ fn handle_load_module(
 #[cfg(feature = "standalone")]
 #[skyline::hook(replace = nn::ro::UnloadModule)]
 fn handle_unload_module(in_module: &mut nn::ro::Module) {
-    let name = unsafe { skyline::from_c_str(&in_module.Name as *const u8) };
+    let name = unsafe { 
+        let c_str = &in_module.Name as *const _;
+        let name_slice = core::slice::from_raw_parts(c_str, libc::strlen(c_str));
+        match core::str::from_utf8(&name_slice) {
+            Ok(v) => v.to_owned(),
+            Err(e) => String::from("")
+        }
+    };
     println!("[smashline::nro_hook] Module '{}' unloaded.", name);
     let nro_info = NroInfo::new(&name, in_module);
     for hook in UNLOAD_HOOKS.lock().iter() {

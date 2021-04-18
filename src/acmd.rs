@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Copy)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum Category {
     ACMD_GAME,
     ACMD_EFFECT,
@@ -16,7 +16,20 @@ pub struct ScriptInfo {
     pub script: Hash40,
     pub original: Option<&'static mut *const extern "C" fn()>,
     pub low_priority: bool,
-    pub bind_fn: *const extern "C" fn()
+    pub bind_fn: *const extern "C" fn(),
+    pub backup: *const extern "C" fn() // serves same purpose as `original` except for guaranteeing something on uninstallation
+}
+
+impl ScriptInfo {
+    pub fn transfer(&mut self) -> Self {
+        Self {
+            script: self.script,
+            original: self.original.take(),
+            low_priority: self.low_priority,
+            bind_fn: self.bind_fn,
+            backup: self.backup
+        }
+    }
 }
 
 impl PartialEq<Hash40> for ScriptInfo {
@@ -70,11 +83,41 @@ pub fn nro_unload(info: &NroInfo) {
     
 }
 
+pub unsafe fn remove_acmd_scripts(range: (usize, usize)) {
+    crate::scripts::remove_live_acmd_scripts(range);
+
+    let locks = &mut [
+        GAME_SCRIPTS.lock(),
+        EFFECT_SCRIPTS.lock(),
+        SOUND_SCRIPTS.lock(),
+        EXPRESSION_SCRIPTS.lock()
+    ];
+
+    let (begin, end) = range;
+
+    for scripts in locks.iter_mut() {
+        for (_, script_list) in scripts.iter_mut() {
+            let mut new_vec = Vec::with_capacity(script_list.len());
+            for script in script_list.iter_mut() {
+                let as_usize = script.bind_fn as *const () as usize;
+                if !(begin <= as_usize && as_usize < end) {
+                    new_vec.push(script.transfer());
+                }
+            }
+            *script_list = new_vec;
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "Rust" fn replace_acmd_script(agent: Hash40, script: Hash40, original: Option<&'static mut *const extern "C" fn()>, category: Category, low_priority: bool, bind_fn: *const extern "C" fn()) {
     crate::unwind::register_skyline_plugin(bind_fn as usize);
     
-    let info = ScriptInfo { script, original, low_priority, bind_fn };
+    let mut info = ScriptInfo { script, original, low_priority, bind_fn, backup: 0 as _ };
+
+    unsafe {
+        crate::scripts::install_live_acmd_scripts(agent, category, &mut info);
+    }
     
     let mut map = match category {
         Category::ACMD_GAME => GAME_SCRIPTS.lock(),

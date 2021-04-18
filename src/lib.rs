@@ -48,11 +48,18 @@ macro_rules! c_str {
     }
 }
 
+pub static mut COMMON_MEMORY_INFO: Option<nx::QueryMemoryResult> = None;
+
 fn nro_load(info: &NroInfo) {
     callbacks::nro_load(info);   
     hooks::nro_load(info);
     acmd::nro_load(info);
     status::nro_load(info);
+    if info.name == "common" {
+        unsafe {
+            COMMON_MEMORY_INFO = Some(nx::svc::query_memory((*info.module.ModuleObject).module_base as usize).expect("Unable to query common memory info."));
+        }
+    }
 }
 
 fn nro_unload(info: &NroInfo) {
@@ -73,4 +80,48 @@ pub fn main() {
     }
     status::install();
     unwind::install();
+
+    std::thread::spawn(|| { unsafe {
+        let mut load_flag = false;
+        skyline::nn::hid::InitializeNpad();
+        loop {
+            const KEY_L: u32 = 1 << 6;
+            const KEY_R: u32 = 1 << 7;
+            const KEY_DUP: u32 = 1 << 13;
+            const BUTTON_COMBO: u64 = (KEY_L | KEY_R | KEY_DUP) as u64;
+            use skyline::nn::hid::*;
+            if load_flag {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                load_flag = false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let mut npad_state = NpadHandheldState::default();
+            GetNpadHandheldState(&mut npad_state, &0x20);
+            if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                loader::load_development_plugin();
+                load_flag = true;
+                continue;
+            } 
+            for x in 0..8 {
+                GetNpadFullKeyState(&mut npad_state, &x);
+                if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                    loader::load_development_plugin();
+                    load_flag = true;
+                    break;
+                }
+                GetNpadJoyDualState(&mut npad_state, &x);
+                if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                    loader::load_development_plugin();
+                    load_flag = true;
+                    break;
+                }
+                GetNpadGcState(&mut npad_state, &x);
+                if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                    loader::load_development_plugin();
+                    load_flag = true;
+                    break;
+                }
+            }
+    }
+    }});
 }

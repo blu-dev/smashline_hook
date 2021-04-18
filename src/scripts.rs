@@ -13,15 +13,16 @@ use parking_lot::Mutex;
 use crate::hooks::lazy_symbol_replace;
 use crate::acmd::{Category, GAME_SCRIPTS, EFFECT_SCRIPTS, SOUND_SCRIPTS, EXPRESSION_SCRIPTS};
 use crate::status::STATUS_SCRIPTS;
+use crate::COMMON_MEMORY_INFO;
 use Category::*;
 
 macro_rules! generate_new_create_agent {
-    ($(($func_name:ident, $agent_infos:ident, $script_list:ident)),* $(,)?) => {
+    ($(($func_name:ident, $agent_infos:ident, $script_list:ident, $cat:ident, $share:expr)),* $(,)?) => {
         $(
-            generate_new_create_agent!($func_name, $agent_infos, $script_list);
+            generate_new_create_agent!($func_name, $agent_infos, $script_list, $cat, $share);
         )*
     };
-    ($func_name:ident, $agent_infos:ident, $script_list:ident) => {
+    ($func_name:ident, $agent_infos:ident, $script_list:ident, $cat:ident, $share:expr) => {
         paste! {
             pub unsafe extern "C" fn [<create_agent_fighter_ $func_name>] (
                 hash: Hash40,
@@ -33,6 +34,7 @@ macro_rules! generate_new_create_agent {
                 for (_, info) in infos.iter() {
                     if info.hashes.contains(&hash) {
                         let agent = (info.original)(hash, bobj, boma, state);
+                        LOADED_ACMD_AGENTS.lock().push(LoadedAcmdAgentInfo { agent: agent, hash: hash, category: $cat, is_share: $share });
                         let mut script_list = $script_list.lock();
                         if let Some(scripts) = script_list.get_mut(&Hash40::new("common")) {
                             for script_info in scripts.iter_mut() {
@@ -44,8 +46,9 @@ macro_rules! generate_new_create_agent {
                         }
                         if let Some(scripts) = script_list.get_mut(&hash) {
                             for script_info in scripts.iter_mut() {
+                                let og_func = *(*agent).functions.get(&script_info.script).unwrap_or(&(0 as _));
+                                script_info.backup = std::mem::transmute(og_func);
                                 if let Some(original) = script_info.original.as_mut() {
-                                    let og_func = *(*agent).functions.get(&script_info.script).unwrap_or(&(0 as _));
                                     **original = std::mem::transmute(og_func);
                                 }
                                 (*agent).sv_set_function_hash(std::mem::transmute(script_info.bind_fn), script_info.script);
@@ -61,14 +64,14 @@ macro_rules! generate_new_create_agent {
 }
 
 generate_new_create_agent!(
-    (animcmd_game, GAME_CREATE_AGENTS, GAME_SCRIPTS),
-    (animcmd_game_share, GAME_SHARE_CREATE_AGENTS, GAME_SCRIPTS),
-    (animcmd_effect, EFFECT_CREATE_AGENTS, EFFECT_SCRIPTS),
-    (animcmd_effect_share, EFFECT_SHARE_CREATE_AGENTS, EFFECT_SCRIPTS),
-    (animcmd_sound, SOUND_CREATE_AGENTS, SOUND_SCRIPTS),
-    (animcmd_sound_share, SOUND_SHARE_CREATE_AGENTS, SOUND_SCRIPTS),
-    (animcmd_expression, EXPRESSION_CREATE_AGENTS, EXPRESSION_SCRIPTS),
-    (animcmd_expression_share, EXPRESSION_SHARE_CREATE_AGENTS, EXPRESSION_SCRIPTS)
+    (animcmd_game, GAME_CREATE_AGENTS, GAME_SCRIPTS, ACMD_GAME, false),
+    (animcmd_game_share, GAME_SHARE_CREATE_AGENTS, GAME_SCRIPTS, ACMD_GAME, true),
+    (animcmd_effect, EFFECT_CREATE_AGENTS, EFFECT_SCRIPTS, ACMD_EFFECT, false),
+    (animcmd_effect_share, EFFECT_SHARE_CREATE_AGENTS, EFFECT_SCRIPTS, ACMD_EFFECT, true),
+    (animcmd_sound, SOUND_CREATE_AGENTS, SOUND_SCRIPTS, ACMD_SOUND, false),
+    (animcmd_sound_share, SOUND_SHARE_CREATE_AGENTS, SOUND_SCRIPTS, ACMD_SOUND, true),
+    (animcmd_expression, EXPRESSION_CREATE_AGENTS, EXPRESSION_SCRIPTS, ACMD_EXPRESSION, false),
+    (animcmd_expression_share, EXPRESSION_SHARE_CREATE_AGENTS, EXPRESSION_SCRIPTS, ACMD_EXPRESSION, true)
 );
 
 const STATUS_DTOR: usize = 15;
@@ -106,12 +109,14 @@ unsafe extern "C" fn set_status_scripts(agent: *mut L2CAgentBase) {
     let mut scripts = STATUS_SCRIPTS.lock();
     if let Some(script_list) = scripts.get_mut(&agent_hash) {
         for script in script_list.iter_mut() {
+            let og_func = (*agent).sv_get_status_func(
+                &L2CValue::I32(script.status.get()),
+                &L2CValue::I32(script.condition.get())
+            ).get_ptr();
             if let Some(original) = script.original.as_mut() {
-                **original = (*agent).sv_get_status_func(
-                    &L2CValue::I32(script.status.get()),
-                    &L2CValue::I32(script.condition.get())
-                ).get_ptr() as _;
+                **original = std::mem::transmute(og_func);
             }
+            script.backup = std::mem::transmute(og_func);
             let og = (*agent).sv_get_status_func(
                 &L2CValue::I32(script.status.get()),
                 &L2CValue::I32(script.condition.get())
@@ -143,6 +148,8 @@ unsafe extern "C" fn create_agent_fighter_status_script(
             } else {
                 vtables.insert(module.clone(), vec![new_vtable as u64]);
             }
+            let mut loaded_agents = LOADED_STATUS_AGENTS.lock();
+            loaded_agents.push(LoadedStatusAgentInfo { agent, hash });
             return agent;
         }
     }
@@ -157,12 +164,30 @@ struct CreateAgentInfo {
     pub hashes: Vec<Hash40>
 }
 
+struct LoadedAcmdAgentInfo {
+    pub agent: *mut L2CAgentBase,
+    pub hash: Hash40,
+    pub category: Category,
+    pub is_share: bool
+}
+
+unsafe impl Sync for LoadedAcmdAgentInfo {}
+unsafe impl Send for LoadedAcmdAgentInfo {}
+
 struct StatusCreateAgentInfo {
     pub agent: Hash40,
     pub set_status_func: StatusFunc,
     pub status_dtor: StatusFunc,
     pub status_del_dtor: StatusFunc
 }
+
+struct LoadedStatusAgentInfo {
+    pub agent: *mut L2CAgentBase,
+    pub hash: Hash40
+}
+
+unsafe impl Sync for LoadedStatusAgentInfo {}
+unsafe impl Send for LoadedStatusAgentInfo {}
 
 lazy_static! {
     static ref GAME_CREATE_AGENTS: Mutex<HashMap<String, CreateAgentInfo>> = Mutex::new(HashMap::new());
@@ -179,6 +204,9 @@ lazy_static! {
 
     static ref STATUS_CREATE_AGENTS: Mutex<HashMap<String, CreateAgentInfo>> = Mutex::new(HashMap::new());
     static ref STATUS_VTABLES: Mutex<HashMap<String, Vec<u64>>> = Mutex::new(HashMap::new());
+
+    static ref LOADED_ACMD_AGENTS: Mutex<Vec<LoadedAcmdAgentInfo>> = Mutex::new(Vec::new());
+    static ref LOADED_STATUS_AGENTS: Mutex<Vec<LoadedStatusAgentInfo>> = Mutex::new(Vec::new());
 }
 
 fn get_movk_offset(instr: u32) -> u32 {
@@ -302,6 +330,114 @@ pub fn release_status_vtables(info: &NroInfo) {
             for vtable in vtable_list.into_iter() {
                 let vtable = vtable as *mut u8;
                 std::alloc::dealloc(vtable, layout);
+            }
+        }
+    }
+}
+
+pub fn install_live_acmd_scripts(agent_hash: Hash40, category: Category, info: &mut crate::acmd::ScriptInfo) {
+    let agents = LOADED_ACMD_AGENTS.lock();
+    for agent in agents.iter() {
+        if agent.hash == agent_hash && agent.category == category {
+            unsafe {
+                let test_func = *((*agent.agent).vtable as *const usize).add(1);
+                let original_module = crate::nx::svc::query_memory(test_func).expect("Smashline unable to query mem info from live agent.");
+                let og_begin = original_module.mem_info.base_address;
+                let og_end = og_begin + original_module.mem_info.size;
+                let current = *(*agent.agent).functions.get(&info.script).unwrap_or(&(0 as _));
+                if current == 0 as _ || (og_begin <= (current as usize) && (current as usize) < og_end) {
+                    if let Some(original) = info.original.as_mut() {
+                        **original = std::mem::transmute(current);
+                    }
+                    info.backup = std::mem::transmute(current);
+                    (*agent.agent).sv_set_function_hash(std::mem::transmute(info.bind_fn), info.script);
+                }
+            }
+        }
+    }
+}
+
+pub unsafe fn install_live_status_scripts(agent_hash: Hash40, info: &mut crate::status::StatusInfo, common_module: &crate::nx::QueryMemoryResult) {
+    let agents = LOADED_STATUS_AGENTS.lock();
+    for agent in agents.iter() {
+        if agent.hash == agent_hash {
+            let test_func = *((*agent.agent).vtable as *const usize).add(STATUS_DTOR);
+            let original_module = crate::nx::svc::query_memory(test_func).expect("Smashline unable to query mem info from live agent.");
+            let common = common_module.mem_info.base_address..common_module.mem_info.base_address + common_module.mem_info.size;
+            let original = original_module.mem_info.base_address..original_module.mem_info.base_address + original_module.mem_info.size;
+            let current = (*agent.agent).sv_get_status_func(
+                &L2CValue::I32(info.status.get()),
+                &L2CValue::I32(info.condition.get())
+            ).get_ptr() as usize;
+            // println!("{:#x} {:#x?} {:#x?}", current, common, original);
+            if current == 0 || common.contains(&current) || original.contains(&current) {
+                if let Some(original) = info.original.as_mut() {
+                    **original = std::mem::transmute(current);
+                }
+                info.backup = std::mem::transmute(current);
+                (*agent.agent).sv_set_status_func(
+                    L2CValue::I32(info.status.get()),
+                    L2CValue::I32(info.condition.get()),
+                    std::mem::transmute(info.replacement)
+                );
+            }
+        }
+    }
+}
+
+pub unsafe fn remove_live_acmd_scripts(range: (usize, usize)) {
+    macro_rules! remove_scripts {
+        ($agent:ident, $scripts:ident, $begin:ident, $end:ident) => {
+            let scripts = $scripts.lock();
+            if let Some(script_list) = scripts.get(&$agent.hash) {
+                for script in script_list.iter() {
+                    let as_usize = script.bind_fn as *const () as usize;
+                    if $begin <= as_usize && as_usize < $end {
+                        (*$agent.agent).sv_set_function_hash(
+                            std::mem::transmute(script.backup),
+                            script.script
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let (begin, end) = range;
+    let agents = LOADED_ACMD_AGENTS.lock();
+    for agent in agents.iter() {
+        match agent.category {
+            ACMD_GAME => {
+                remove_scripts!(agent, GAME_SCRIPTS, begin, end);
+            },
+            ACMD_EFFECT => {
+                remove_scripts!(agent, EFFECT_SCRIPTS, begin, end);
+            },
+            ACMD_SOUND => {
+                remove_scripts!(agent, SOUND_SCRIPTS, begin, end);
+            },
+            ACMD_EXPRESSION => {
+                remove_scripts!(agent, EXPRESSION_SCRIPTS, begin, end);
+            }
+        }
+    }
+}
+
+pub unsafe fn remove_live_status_scripts(range: (usize, usize)) {
+    let (begin, end) = range;
+    let agents = LOADED_STATUS_AGENTS.lock();
+    let scripts = STATUS_SCRIPTS.lock();
+    for agent in agents.iter() {
+        if let Some(script_list) = scripts.get(&agent.hash) {
+            for script in script_list.iter() {
+                let as_usize = script.replacement as *const () as usize;
+                if begin <= as_usize && as_usize < end {
+                    (*agent.agent).sv_set_status_func(
+                        L2CValue::I32(script.status.get()),
+                        L2CValue::I32(script.condition.get()),
+                        std::mem::transmute(script.backup)
+                    );
+                }
             }
         }
     }

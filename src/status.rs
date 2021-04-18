@@ -16,7 +16,8 @@ pub struct StatusInfo {
     pub condition: LuaConstant,
     pub original: Option<&'static mut *const extern "C" fn()>,
     pub low_priority: bool,
-    pub replacement: *const extern "C" fn()
+    pub replacement: *const extern "C" fn(),
+    pub backup: *const extern "C" fn()
 }
 
 impl StatusInfo {
@@ -26,7 +27,8 @@ impl StatusInfo {
             condition: self.condition.clone(),
             original: self.original.take(),
             low_priority: self.low_priority,
-            replacement: self.replacement
+            replacement: self.replacement,
+            backup: self.backup
         }
     }
 }
@@ -150,17 +152,39 @@ pub fn nro_unload(info: &NroInfo) {
     crate::scripts::release_status_vtables(info);
 }
 
+pub unsafe fn remove_status_scripts(range: (usize, usize)) {
+    crate::scripts::remove_live_status_scripts(range);
+
+    let range = range.0..range.1;
+    let mut scripts = STATUS_SCRIPTS.lock();
+    for (_, script_list) in scripts.iter_mut() {
+        let mut new_script_list = Vec::with_capacity(script_list.len());
+        for script in script_list.iter_mut() {
+            if !range.contains(&(script.replacement as usize)) {
+                new_script_list.push(script.transfer());
+            }
+        }
+        *script_list = new_script_list;
+    }
+}
+
 #[no_mangle]
 pub extern "Rust" fn replace_status_script(agent: Hash40, status: LuaConstant, condition: LuaConstant, original: Option<&'static mut *const extern "C" fn()>, low_priority: bool, replacement: *const extern "C" fn()) {
-    let info = StatusInfo {
+    let mut info = StatusInfo {
         status,
         condition,
         original,
         low_priority,
-        replacement
+        replacement,
+        backup: 0 as _
     };
 
     let mut scripts = STATUS_SCRIPTS.lock();
+    unsafe {
+        if let Some(common_module) = crate::COMMON_MEMORY_INFO.as_ref() {
+            crate::scripts::install_live_status_scripts(agent, &mut info, common_module);
+        }
+    }
 
     if let Some(script_list) = scripts.get_mut(&agent) {
         unsafe {
@@ -190,7 +214,8 @@ pub extern "Rust" fn replace_common_status_script(status: LuaConstant, condition
         condition,
         original,
         low_priority: false,
-        replacement
+        replacement,
+        backup: 0 as _
     };
 
     let mut scripts = COMMON_STATUS_SCRIPTS.lock();

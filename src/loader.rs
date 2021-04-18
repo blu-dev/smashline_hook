@@ -12,29 +12,20 @@ macro_rules! align_up {
 }
 
 struct DevelopmentPlugin {
-    pub path: PathBuf,
+    // pub path: PathBuf,
     pub nro_module: Module,
     pub nrr_info: RegistrationInfo,
-    pub bss_section: *mut u8,
-    pub bss_size: usize 
+    // pub bss_section: *mut u8,
+    // pub bss_size: usize 
 }
 
 unsafe impl Send for DevelopmentPlugin {}
 unsafe impl Sync for DevelopmentPlugin {}
 
-impl Drop for DevelopmentPlugin {
-    fn drop(&mut self) {
-        println!("[smashline::loader] Unloading the development plugin...");
-        unsafe {
-            // apparently UnloadModule & UnregisterModuleInfo take ownership of the images we supply so we can't free them ourselves
-            let rc = ro::UnloadModule(&mut self.nro_module);
-            if rc != 0 {
-                panic!("Smashline failed to unload the development plugin ({:#x})", rc);
-            }
-            ro::UnregisterModuleInfo(&mut self.nrr_info, 0 as _); // there isn't actually a second arg here lmao
-        }
-
-    }
+extern "C" {
+    #[allow(non_snake_case)]
+    #[link_name = "\u{1}_ZN2nn2ro20UnregisterModuleInfoEPNS0_16RegistrationInfoE"]
+    fn UnregisterModuleInfo(info: *mut RegistrationInfo);
 }
 
 lazy_static! {
@@ -122,14 +113,15 @@ impl DevelopmentPlugin {
             let bss_section = bss_section as *mut u8;
     
             Some(Self {
-                path,
+                // path,
                 nro_module,
                 nrr_info,
-                bss_section,
-                bss_size
+                // bss_section,
+                // bss_size
             })
         } else {
             // we don't free on success since it's owned by RO now
+            libc::free(bss_section as _);
             libc::free(nro_image as _);
             libc::free(nrr_image as _);
             None
@@ -148,15 +140,31 @@ impl DevelopmentPlugin {
         }
     }
 
-    pub unsafe fn uninstall(&self) {
+    pub unsafe fn uninstall(&mut self) {
         let mut uninstall_fn = 0usize;
         let rc = ro::LookupModuleSymbol(&mut uninstall_fn, &self.nro_module, c_str!("smashline_uninstall"));
-        if rc != 0 {
-            panic!("Smashline development plugin does not export 'smashline_uninstall'");
+        
+        if rc != 0 || uninstall_fn == 0 {
+            println!("[smashline::loader] Development plugin does not export 'smashline_uninstall', continuing with default uninstallation.");
         } else {
             let callable: extern "Rust" fn() = std::mem::transmute(uninstall_fn);
-            callable()
+            callable();
+            println!("[smashline::loader] Development plugin's uninstall routine called, continuing with default uninstallation.");
         }
+
+        let mem_info = crate::nx::svc::query_memory((*self.nro_module.ModuleObject).module_base as usize).expect("Smashline unable to query memory for development plugin on uninstall.");
+        let range = (mem_info.mem_info.base_address, mem_info.mem_info.base_address + mem_info.mem_info.size);
+
+        crate::callbacks::remove_fighter_resets(range);
+        crate::callbacks::remove_agent_resets(range);
+        crate::callbacks::remove_fighter_frame_callbacks(range);
+        crate::callbacks::remove_weapon_frame_callbacks(range);
+        crate::acmd::remove_acmd_scripts(range);
+        crate::status::remove_status_scripts(range);
+
+        println!("[smashline::loader] Unloading the development plugin...");
+        ro::UnloadModule(&mut self.nro_module);
+        UnregisterModuleInfo(&mut self.nrr_info);
     }
 }
 
@@ -164,11 +172,12 @@ impl DevelopmentPlugin {
 // Only one development plugin is allowed at a time
 pub unsafe fn load_development_plugin() {
     let mut loaded = LOADED_DEVELOPMENT_PLUGIN.lock();
-    if let Some(plugin) = loaded.take() {
+    if let Some(mut plugin) = loaded.take() {
         plugin.uninstall();
-        drop(plugin);
+        std::mem::forget(plugin);
     }
-    if let Some(plugin) = DevelopmentPlugin::new("rom:/smashline/development.nro") {
+    // hardcode the path here. would like to use rom but nnsdk caches the rom contents when it's mounted ig
+    if let Some(plugin) = DevelopmentPlugin::new("sd:/atmosphere/contents/01006A800016E000/romfs/smashline/development.nro") {
         plugin.install();
         *loaded = Some(plugin);
     }

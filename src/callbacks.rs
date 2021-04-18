@@ -12,6 +12,8 @@ use parking_lot::Mutex;
 
 type FighterFrame = extern "C" fn(&mut L2CFighterCommon) -> L2CValue;
 type WeaponFrame = extern "C" fn(&mut L2CFighterBase) -> L2CValue;
+type FighterFrameCallback = fn(&mut L2CFighterCommon);
+type WeaponFrameCallback = fn(&mut L2CFighterBase);
 type FighterReset = fn(&mut L2CFighterCommon);
 type AgentReset = fn(&mut L2CFighterBase);
 
@@ -39,7 +41,13 @@ lazy_static! {
 
     static ref FIGHTER_RESETS: Mutex<Vec<FighterReset>> = Mutex::new(Vec::new());
     static ref AGENT_RESETS: Mutex<Vec<AgentReset>> = Mutex::new(Vec::new());
+
+    static ref FIGHTER_FRAME_CALLBACKS: Mutex<Vec<FighterFrameCallback>> = Mutex::new(Vec::new());
+    static ref WEAPON_FRAME_CALLBACKS: Mutex<Vec<WeaponFrameCallback>> = Mutex::new(Vec::new());
 }
+
+static mut SHOULD_INSTALL_FIGHTER_CB: bool = false;
+static mut SHOULD_INSTALL_WEAPON_CB: bool = false;
 
 // These symbols must be used since they are passed va_lists
 // call_check_attack, for example, does not take a va_list
@@ -124,6 +132,74 @@ fn agent_reset(agent: &mut L2CFighterBase) {
     }
 }
 
+#[skyline::hook(replace = L2CFighterCommon_sys_line_system_control_fighter)]
+fn fighter_frame_callbacks(fighter: &mut L2CFighterCommon) -> L2CValue {
+    let ret = call_original!(fighter);
+    for cb in FIGHTER_FRAME_CALLBACKS.lock().iter() {
+        cb(fighter);
+    }
+    ret
+}
+
+#[skyline::hook(replace = L2CFighterBase_sys_line_system_control)]
+fn weapon_frame_callbacks(weapon: &mut L2CFighterBase) -> L2CValue {
+    let ret = call_original!(weapon);
+    for cb in WEAPON_FRAME_CALLBACKS.lock().iter() {
+        cb(weapon);
+    }
+    ret
+}
+
+pub fn remove_fighter_resets(range: (usize, usize)) {
+    let (begin, end) = range;
+    let mut resets = FIGHTER_RESETS.lock();
+    let mut new_resets = Vec::with_capacity(resets.len());
+    for callback in resets.iter() {
+        let as_usize = *callback as *const () as usize;
+        if !(begin <= as_usize && as_usize < end) {
+            new_resets.push(*callback);
+        }
+    }
+    *resets = new_resets;
+}
+
+pub fn remove_agent_resets(range: (usize, usize)) {
+    let (begin, end) = range;
+    let mut resets = AGENT_RESETS.lock();
+    let mut new_resets = Vec::with_capacity(resets.len());
+    for callback in resets.iter() {
+        let as_usize = *callback as *const () as usize;
+        if !(begin <= as_usize && as_usize < end) {
+            new_resets.push(*callback);
+        }
+    }
+    *resets = new_resets;
+}
+
+pub fn remove_fighter_frame_callbacks(range: (usize, usize)) {
+    let range = range.0..range.1;
+    let mut callbacks = FIGHTER_FRAME_CALLBACKS.lock();
+    let mut new_callbacks = Vec::with_capacity(callbacks.len());
+    for callback in callbacks.iter() {
+        if !range.contains(&(*callback as *const () as usize)) {
+            new_callbacks.push(*callback);
+        }
+    }
+    *callbacks = new_callbacks;
+}
+
+pub fn remove_weapon_frame_callbacks(range: (usize, usize)) {
+    let range = range.0..range.1;
+    let mut callbacks = WEAPON_FRAME_CALLBACKS.lock();
+    let mut new_callbacks = Vec::with_capacity(callbacks.len());
+    for callback in callbacks.iter() {
+        if !range.contains(&(*callback as *const () as usize)) {
+            new_callbacks.push(*callback);
+        }
+    }
+    *callbacks = new_callbacks;
+}
+
 #[no_mangle]
 pub extern "Rust" fn replace_fighter_frame(agent: LuaConstant, original: Option<&'static mut *const extern "C" fn()>, replacement: FighterFrame) {
     let info = FighterFrameInfo {
@@ -156,6 +232,34 @@ pub extern "Rust" fn add_agent_reset_callback(callback: AgentReset) {
     AGENT_RESETS.lock().push(callback);
 }
 
+#[no_mangle]
+pub extern "Rust" fn add_fighter_frame_callback(callback: FighterFrameCallback) {
+    static SHOULD_INSTALL: std::sync::Once = std::sync::Once::new();
+    SHOULD_INSTALL.call_once(|| {
+        unsafe {
+            SHOULD_INSTALL_FIGHTER_CB = true;
+            if let Some(_) = crate::COMMON_MEMORY_INFO.as_ref() {
+                skyline::install_hook!(fighter_frame_callbacks);
+            }
+        }
+    });
+    FIGHTER_FRAME_CALLBACKS.lock().push(callback);
+}
+
+#[no_mangle]
+pub extern "Rust" fn add_weapon_frame_callback(callback: WeaponFrameCallback) {
+    static SHOULD_INSTALL: std::sync::Once = std::sync::Once::new();
+    SHOULD_INSTALL.call_once(|| {
+        unsafe {
+            SHOULD_INSTALL_WEAPON_CB = true;
+            if let Some(_) = crate::COMMON_MEMORY_INFO.as_ref() {
+                skyline::install_hook!(weapon_frame_callbacks);
+            }
+        }
+    });
+    WEAPON_FRAME_CALLBACKS.lock().push(callback);
+}
+
 fn install() {
     crate::hooks::replace_symbol("common", "_ZN7lua2cpp16L2CFighterCommon20sys_line_system_initEv", sys_line_system_fighter_init_replace as *const extern "C" fn(), None);
     crate::hooks::replace_symbol("common", "_ZN7lua2cpp14L2CFighterBase20sys_line_system_initEv", sys_line_system_init_replace as *const extern "C" fn(), None);
@@ -163,6 +267,15 @@ fn install() {
         fighter_reset,
         agent_reset
     );
+
+    unsafe {
+        if SHOULD_INSTALL_FIGHTER_CB {
+            skyline::install_hook!(fighter_frame_callbacks);
+        }
+        if SHOULD_INSTALL_WEAPON_CB {
+            skyline::install_hook!(weapon_frame_callbacks);
+        }
+    }
 }
 
 pub fn nro_load(info: &NroInfo) {

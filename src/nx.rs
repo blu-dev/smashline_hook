@@ -33,6 +33,7 @@ pub enum MemoryState {
 }
 
 bitflags! {
+    #[repr(C)]
     pub struct MemoryPermission : u32 {
         const NONE          = 0;
         const READ          = 1 << 0;
@@ -46,6 +47,7 @@ bitflags! {
 }
 
 bitflags! {
+    #[repr(C)]
     pub struct MemoryAttribute : u32 {
         const LOCKED        = 1 << 0;
         const IPC_LOCKED    = 1 << 1;
@@ -53,7 +55,7 @@ bitflags! {
         const UNCACHED      = 1 << 3;
     }
 }
-
+#[repr(C)]
 pub struct MemoryInfo {
     pub base_address: usize,
     pub size: usize,
@@ -70,6 +72,7 @@ pub struct PageInfo {
     pub flags: u32
 }
 
+#[repr(C)]
 pub struct QueryMemoryResult {
     pub mem_info: MemoryInfo,
     pub page_info: PageInfo
@@ -79,19 +82,17 @@ use std::mem::MaybeUninit;
 
 pub mod svc {
     use super::*;
-    pub fn query_memory(address: usize) -> Result<QueryMemoryResult, NxResult> {
+
+    #[inline(always)]
+    pub extern "C" fn query_memory(address: usize) -> Result<QueryMemoryResult, NxResult> {
         let res: NxResult;
-        let mem_info = MaybeUninit::<MemoryInfo>::uninit();
+        let mut mem_info: MemoryInfo = unsafe { std::mem::zeroed() };
         let svc_result = unsafe {
-            let mem_info_ptr = mem_info.as_ptr();
-            let page_info: PageInfo;
-            asm!(
-                "svc 0x6"
-                : "={w0}" (res), "={w1}" (page_info)
-                : "{x0}" (mem_info_ptr), "{x2}" (address)
-            );
+            let mem_info_ptr = &mut mem_info as *mut MemoryInfo;;
+            let mut page_info: PageInfo = PageInfo { flags: 0 };
+            asm!("svc 0x6" : "={w0}" (res), "={w1}" (page_info) : "{x0}" (mem_info_ptr), "{x2}" (address) : : "volatile");
             QueryMemoryResult {
-                mem_info: mem_info.assume_init(),
+                mem_info: mem_info,
                 page_info
             }
         };
