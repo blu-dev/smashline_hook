@@ -8,7 +8,7 @@ use crate::LuaConstant;
 
 lazy_static! {
     pub static ref STATUS_SCRIPTS: Mutex<HashMap<Hash40, Vec<StatusInfo>>> = Mutex::new(HashMap::new());
-    static ref COMMON_STATUS_SCRIPTS: Mutex<HashMap<Hash40, Vec<StatusInfo>>> = Mutex::new(HashMap::new());
+    pub static ref COMMON_STATUS_SCRIPTS: Mutex<HashMap<Hash40, Vec<StatusInfo>>> = Mutex::new(HashMap::new());
 }
 
 pub struct StatusInfo {
@@ -54,13 +54,14 @@ extern "C" fn sub_set_fighter_common_table_replace(fighter: &mut L2CFighterCommo
         for script in script_list.iter_mut() {
             if script.status.get() != FIGHTER_STATUS_KIND_NONE {
                 unsafe {
+                    let og = fighter.sv_get_status_func(
+                        &L2CValue::I32(script.status.get()),
+                        &L2CValue::I32(script.condition.get()),
+                    ).get_ptr() as *const extern "C" fn();
                     if let Some(original) = script.original.as_mut() {
-                        let og = fighter.sv_get_status_func(
-                            &L2CValue::I32(script.status.get()),
-                            &L2CValue::I32(script.condition.get())
-                        ).get_ptr() as *const extern "C" fn();
                         **original = og;
                     }
+                    script.backup = og;
                     fighter.sv_set_status_func(
                         L2CValue::I32(script.status.get()),
                         L2CValue::I32(script.condition.get()),
@@ -157,7 +158,17 @@ pub unsafe fn remove_status_scripts(range: (usize, usize)) {
 
     let range = range.0..range.1;
     let mut scripts = STATUS_SCRIPTS.lock();
+    let mut common_scripts = COMMON_STATUS_SCRIPTS.lock();
     for (_, script_list) in scripts.iter_mut() {
+        let mut new_script_list = Vec::with_capacity(script_list.len());
+        for script in script_list.iter_mut() {
+            if !range.contains(&(script.replacement as usize)) {
+                new_script_list.push(script.transfer());
+            }
+        }
+        *script_list = new_script_list;
+    }
+    for (_, script_list) in common_scripts.iter_mut() {
         let mut new_script_list = Vec::with_capacity(script_list.len());
         for script in script_list.iter_mut() {
             if !range.contains(&(script.replacement as usize)) {
@@ -182,7 +193,7 @@ pub extern "Rust" fn replace_status_script(agent: Hash40, status: LuaConstant, c
     let mut scripts = STATUS_SCRIPTS.lock();
     unsafe {
         if let Some(common_module) = crate::COMMON_MEMORY_INFO.as_ref() {
-            crate::scripts::install_live_status_scripts(agent, &mut info, common_module);
+            crate::scripts::install_live_status_scripts(agent, &mut info, common_module, false);
         }
     }
 
@@ -209,7 +220,7 @@ pub extern "Rust" fn replace_status_script(agent: Hash40, status: LuaConstant, c
 
 #[no_mangle]
 pub extern "Rust" fn replace_common_status_script(status: LuaConstant, condition: LuaConstant, original: Option<&'static mut *const extern "C" fn()>, replacement: *const extern "C" fn()) {
-    let info = StatusInfo {
+    let mut info = StatusInfo {
         status,
         condition,
         original,
@@ -219,6 +230,11 @@ pub extern "Rust" fn replace_common_status_script(status: LuaConstant, condition
     };
 
     let mut scripts = COMMON_STATUS_SCRIPTS.lock();
+    unsafe {
+        if let Some(common_module) = crate::COMMON_MEMORY_INFO.as_ref() {
+            crate::scripts::install_live_status_scripts(Hash40::new("common"), &mut info, common_module, true);
+        }
+    }
     if let Some(script_list) = scripts.get_mut(&Hash40::new("common")) {
         unsafe {
             if let Some(resolver) = CONSTANT_RESOLVER.as_ref() {

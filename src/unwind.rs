@@ -194,6 +194,18 @@ pub fn register_skyline_plugin(addr: usize) {
     custom_mem.push(mem_info);
 }
 
+#[inline(never)]
+pub fn unregister_skyline_plugin(base_addr: usize) {
+    let mut custom_mem = CUSTOM_EH_MEM.lock();
+    let mut new_mems = Vec::with_capacity(custom_mem.len());
+    for plugin in custom_mem.iter() {
+        if plugin.mem_info.base_address != base_addr {
+            new_mems.push(*plugin);
+        }
+    }
+    *custom_mem = new_mems;
+}
+
 pub fn install() {
     OFFSET_INIT.call_once(|| {
         unsafe {

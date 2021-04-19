@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 
 use crate::hooks::lazy_symbol_replace;
 use crate::acmd::{Category, GAME_SCRIPTS, EFFECT_SCRIPTS, SOUND_SCRIPTS, EXPRESSION_SCRIPTS};
-use crate::status::STATUS_SCRIPTS;
+use crate::status::{COMMON_STATUS_SCRIPTS, STATUS_SCRIPTS};
 use crate::COMMON_MEMORY_INFO;
 use Category::*;
 
@@ -357,10 +357,10 @@ pub fn install_live_acmd_scripts(agent_hash: Hash40, category: Category, info: &
     }
 }
 
-pub unsafe fn install_live_status_scripts(agent_hash: Hash40, info: &mut crate::status::StatusInfo, common_module: &crate::nx::QueryMemoryResult) {
+pub unsafe fn install_live_status_scripts(agent_hash: Hash40, info: &mut crate::status::StatusInfo, common_module: &crate::nx::QueryMemoryResult, is_common: bool) {
     let agents = LOADED_STATUS_AGENTS.lock();
     for agent in agents.iter() {
-        if agent.hash == agent_hash {
+        if agent.hash == agent_hash || is_common {
             let test_func = *((*agent.agent).vtable as *const usize).add(STATUS_DTOR);
             let original_module = crate::nx::svc::query_memory(test_func).expect("Smashline unable to query mem info from live agent.");
             let common = common_module.mem_info.base_address..common_module.mem_info.base_address + common_module.mem_info.size;
@@ -370,7 +370,7 @@ pub unsafe fn install_live_status_scripts(agent_hash: Hash40, info: &mut crate::
                 &L2CValue::I32(info.condition.get())
             ).get_ptr() as usize;
             // println!("{:#x} {:#x?} {:#x?}", current, common, original);
-            if current == 0 || common.contains(&current) || original.contains(&current) {
+            if current == 0 || common.contains(&current) || (original.contains(&current) && !is_common) {
                 if let Some(original) = info.original.as_mut() {
                     **original = std::mem::transmute(current);
                 }
@@ -427,8 +427,21 @@ pub unsafe fn remove_live_status_scripts(range: (usize, usize)) {
     let (begin, end) = range;
     let agents = LOADED_STATUS_AGENTS.lock();
     let scripts = STATUS_SCRIPTS.lock();
+    let common_scripts = COMMON_STATUS_SCRIPTS.lock();
     for agent in agents.iter() {
         if let Some(script_list) = scripts.get(&agent.hash) {
+            for script in script_list.iter() {
+                let as_usize = script.replacement as *const () as usize;
+                if begin <= as_usize && as_usize < end {
+                    (*agent.agent).sv_set_status_func(
+                        L2CValue::I32(script.status.get()),
+                        L2CValue::I32(script.condition.get()),
+                        std::mem::transmute(script.backup)
+                    );
+                }
+            }
+        }
+        if let Some(script_list) = common_scripts.get(&Hash40::new("common")) {
             for script in script_list.iter() {
                 let as_usize = script.replacement as *const () as usize;
                 if begin <= as_usize && as_usize < end {

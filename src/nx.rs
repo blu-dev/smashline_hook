@@ -7,6 +7,7 @@
 pub struct NxResult(u32);
 
 #[repr(u32)]
+#[derive(Copy, Clone)]
 pub enum MemoryState {
     Free             = 0x00,
     Io               = 0x01,
@@ -56,6 +57,7 @@ bitflags! {
     }
 }
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct MemoryInfo {
     pub base_address: usize,
     pub size: usize,
@@ -68,11 +70,13 @@ pub struct MemoryInfo {
 }
 
 #[repr(transparent)]
+#[derive(Copy, Clone)]
 pub struct PageInfo {
     pub flags: u32
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct QueryMemoryResult {
     pub mem_info: MemoryInfo,
     pub page_info: PageInfo
