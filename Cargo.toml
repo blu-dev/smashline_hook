@@ -1,7 +1,7 @@
 [package]
 name = "smashline_hook"
-version = "0.1.0"
-authors = ["jam1garner <jam1.mcleod@hotmail.com>"]
+version = "1.0.0"
+authors = ["blu-dev <the.blu.dev@gmail.com>"]
 edition = "2018"
 
 [package.metadata.skyline]
@@ -31,3 +31,4 @@ lto = true
 
 [features]
 standalone = []
+development = ["standalone"]

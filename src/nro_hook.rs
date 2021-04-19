@@ -60,7 +60,8 @@ fn handle_unload_module(in_module: &mut nn::ro::Module) {
 }
 
 #[cfg(feature = "standalone")]
-pub fn add_nro_load_hook(callback: Callback) {
+#[no_mangle]
+pub extern "Rust" fn add_nro_load_hook(callback: Callback) {
     let mut hooks = LOAD_HOOKS.lock();
     hooks.push(callback);
 }
@@ -76,7 +77,8 @@ pub fn add_nro_load_hook(callback: Callback) {
 }
 
 #[cfg(feature = "standalone")]
-pub fn add_nro_unload_hook(callback: Callback) {
+#[no_mangle]
+pub extern "Rust" fn add_nro_unload_hook(callback: Callback) {
     let mut hooks = UNLOAD_HOOKS.lock();
     hooks.push(callback);
 }

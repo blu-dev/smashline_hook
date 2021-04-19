@@ -75,53 +75,54 @@ pub fn main() {
     nro_hook::add_nro_load_hook(nro_load);
     nro_hook::add_nro_unload_hook(nro_unload);
     
-    unsafe {
-        loader::load_development_plugin();
-    }
     status::install();
     unwind::install();
-
-    std::thread::spawn(|| { unsafe {
-        let mut load_flag = false;
-        skyline::nn::hid::InitializeNpad();
-        loop {
-            const KEY_L: u32 = 1 << 6;
-            const KEY_R: u32 = 1 << 7;
-            const KEY_DUP: u32 = 1 << 13;
-            const BUTTON_COMBO: u64 = (KEY_L | KEY_R | KEY_DUP) as u64;
-            use skyline::nn::hid::*;
-            if load_flag {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                load_flag = false;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            let mut npad_state = NpadHandheldState::default();
-            GetNpadHandheldState(&mut npad_state, &0x20);
-            if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
-                loader::load_development_plugin();
-                load_flag = true;
-                continue;
-            } 
-            for x in 0..8 {
-                GetNpadFullKeyState(&mut npad_state, &x);
-                if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
-                    loader::load_development_plugin();
-                    load_flag = true;
-                    break;
+    if cfg!(feature = "development") {
+        unsafe {
+            loader::load_development_plugin();
+            std::thread::spawn(|| {
+                let mut load_flag = false;
+                skyline::nn::hid::InitializeNpad();
+                loop {
+                    const KEY_L: u32 = 1 << 6;
+                    const KEY_R: u32 = 1 << 7;
+                    const KEY_DUP: u32 = 1 << 13;
+                    const BUTTON_COMBO: u64 = (KEY_L | KEY_R | KEY_DUP) as u64;
+                    use skyline::nn::hid::*;
+                    if load_flag {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        load_flag = false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let mut npad_state = NpadHandheldState::default();
+                    GetNpadHandheldState(&mut npad_state, &0x20);
+                    if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                        loader::load_development_plugin();
+                        load_flag = true;
+                        continue;
+                    } 
+                    for x in 0..8 {
+                        GetNpadFullKeyState(&mut npad_state, &x);
+                        if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                            loader::load_development_plugin();
+                            load_flag = true;
+                            break;
+                        }
+                        GetNpadJoyDualState(&mut npad_state, &x);
+                        if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                            loader::load_development_plugin();
+                            load_flag = true;
+                            break;
+                        }
+                        GetNpadGcState(&mut npad_state, &x);
+                        if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+                            loader::load_development_plugin();
+                            load_flag = true;
+                            break;
+                        }
+                    }
                 }
-                GetNpadJoyDualState(&mut npad_state, &x);
-                if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
-                    loader::load_development_plugin();
-                    load_flag = true;
-                    break;
-                }
-                GetNpadGcState(&mut npad_state, &x);
-                if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
-                    loader::load_development_plugin();
-                    load_flag = true;
-                    break;
-                }
-            }
+            });
+        }
     }
-    }});
 }
