@@ -159,6 +159,8 @@ impl DevelopmentPlugin {
         crate::callbacks::remove_agent_resets(range);
         crate::callbacks::remove_fighter_frame_callbacks(range);
         crate::callbacks::remove_weapon_frame_callbacks(range);
+        crate::callbacks::remove_fighter_init_callbacks(range);
+        crate::callbacks::remove_agent_init_callbacks(range);
         crate::acmd::remove_acmd_scripts(range);
         crate::status::remove_status_scripts(range);
         crate::unwind::unregister_skyline_plugin(range.0);
