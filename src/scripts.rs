@@ -164,6 +164,7 @@ struct CreateAgentInfo {
     pub hashes: Vec<Hash40>
 }
 
+#[derive(Copy, Clone)]
 struct LoadedAcmdAgentInfo {
     pub agent: *mut L2CAgentBase,
     pub hash: Hash40,
@@ -181,6 +182,7 @@ struct StatusCreateAgentInfo {
     pub status_del_dtor: StatusFunc
 }
 
+#[derive(Copy, Clone)]
 struct LoadedStatusAgentInfo {
     pub agent: *mut L2CAgentBase,
     pub hash: Hash40
@@ -451,6 +453,42 @@ pub unsafe fn remove_live_status_scripts(range: (usize, usize)) {
                         std::mem::transmute(script.backup)
                     );
                 }
+            }
+        }
+    }
+}
+
+pub fn clear_loaded_agent(info: &NroInfo) {
+    let possible_agent_hashes = [
+        GAME_CREATE_AGENTS.lock(),
+        GAME_SHARE_CREATE_AGENTS.lock(),
+        EFFECT_CREATE_AGENTS.lock(),
+        EFFECT_SHARE_CREATE_AGENTS.lock(),
+        SOUND_CREATE_AGENTS.lock(),
+        SOUND_SHARE_CREATE_AGENTS.lock(),
+        EXPRESSION_CREATE_AGENTS.lock(),
+        EXPRESSION_SHARE_CREATE_AGENTS.lock()
+    ];
+    let module_name = String::from(info.name);
+    for hashes in possible_agent_hashes.iter() {
+        if let Some(agent_hashes) = hashes.get(&module_name) {
+            for hash in agent_hashes.hashes.iter() {
+                let mut loaded_agents = LOADED_ACMD_AGENTS.lock();
+                let mut new_agents = Vec::new();
+                for agent in loaded_agents.iter() {
+                    if agent.hash != *hash {
+                        new_agents.push(*agent);
+                    }
+                }
+                *loaded_agents = new_agents;
+                let mut loaded_agents = LOADED_STATUS_AGENTS.lock();
+                let mut new_agents = Vec::new();
+                for agent in loaded_agents.iter() {
+                    if agent.hash != *hash {
+                        new_agents.push(*agent);
+                    }
+                }
+                *loaded_agents = new_agents;
             }
         }
     }

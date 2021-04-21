@@ -63,6 +63,7 @@ fn nro_load(info: &NroInfo) {
 }
 
 fn nro_unload(info: &NroInfo) {
+    scripts::clear_loaded_agent(info);
     callbacks::nro_unload(info);
     hooks::nro_unload(info);
     acmd::nro_unload(info);
