@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use aarch64_decode::*;
 use skyline::nro::NroInfo;
@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 
 use crate::hooks::lazy_symbol_replace;
 use crate::acmd::{Category, GAME_SCRIPTS, EFFECT_SCRIPTS, SOUND_SCRIPTS, EXPRESSION_SCRIPTS};
-use crate::status::{COMMON_STATUS_SCRIPTS, STATUS_SCRIPTS};
+use crate::status::{COMMON_STATUS_SCRIPTS, STATUS_SCRIPTS, STATUS_CUSTOMIZERS};
 use crate::COMMON_MEMORY_INFO;
 use Category::*;
 
@@ -128,6 +128,17 @@ unsafe extern "C" fn set_status_scripts(agent: *mut L2CAgentBase) {
             );
         }
     }
+    drop(scripts);
+    let mut customizers = STATUS_CUSTOMIZERS.lock();
+    if let Some(waza_info) = customizers.get_mut(&agent_hash) {
+        println!("here");
+        let og_func = (*(agent as *mut smash::lua2cpp::L2CFighterCommon)).global_table[0x3D].get_ptr();
+        if let Some(original) = waza_info.original.as_mut() {
+            **original = std::mem::transmute(og_func);
+        }
+        waza_info.backup = std::mem::transmute(og_func);
+        (*(agent as *mut smash::lua2cpp::L2CFighterCommon)).global_table[0x3D].assign(&L2CValue::Ptr(waza_info.replacement as _));
+    }
 }
 
 unsafe extern "C" fn create_agent_fighter_status_script(
@@ -241,6 +252,15 @@ pub fn read_hashes_from_executable(mut address: *const u32) -> Vec<Hash40> {
         }
     }
 
+    let mut set = HashSet::new();
+    for hash in hashes.iter() {
+        set.insert(hash.hash);
+    }
+
+    let hashes: Vec<Hash40> = set.iter().map(|x| Hash40::new_raw(*x)).collect();
+    for hash in hashes.iter() {
+        // println!("{:#x}", hash.hash);
+    }
     hashes
 }
 
@@ -359,6 +379,25 @@ pub fn install_live_acmd_scripts(agent_hash: Hash40, category: Category, info: &
     }
 }
 
+pub unsafe fn install_live_status_waza(agent_hash: Hash40, info: &mut crate::status::StatusWazaInfo) {
+    let agents = LOADED_STATUS_AGENTS.lock();
+    for agent in agents.iter() {
+        if agent.hash == agent_hash {
+            let test_func = *((*agent.agent).vtable as *const usize).add(STATUS_DTOR);
+            let original_module = crate::nx::svc::query_memory(test_func).expect("Smashline unable to query mem info from live agent.");
+            let original = original_module.mem_info.base_address..(original_module.mem_info.base_address + original_module.mem_info.size);
+            let current = (*(agent.agent as *mut smash::lua2cpp::L2CFighterCommon)).global_table[0x3D].get_ptr() as usize;
+            if current == 0 || original.contains(&current) {
+                if let Some(original) = info.original.as_mut() {
+                    **original = std::mem::transmute(current);
+                }
+                info.backup = std::mem::transmute(current);
+                (*(agent.agent as *mut smash::lua2cpp::L2CFighterCommon)).global_table[0x3D].assign(&L2CValue::Ptr(info.replacement as _));
+            }
+        }
+    }
+}
+
 pub unsafe fn install_live_status_scripts(agent_hash: Hash40, info: &mut crate::status::StatusInfo, common_module: &crate::nx::QueryMemoryResult, is_common: bool) {
     let agents = LOADED_STATUS_AGENTS.lock();
     for agent in agents.iter() {
@@ -366,7 +405,7 @@ pub unsafe fn install_live_status_scripts(agent_hash: Hash40, info: &mut crate::
             let test_func = *((*agent.agent).vtable as *const usize).add(STATUS_DTOR);
             let original_module = crate::nx::svc::query_memory(test_func).expect("Smashline unable to query mem info from live agent.");
             let common = common_module.mem_info.base_address..common_module.mem_info.base_address + common_module.mem_info.size;
-            let original = original_module.mem_info.base_address..original_module.mem_info.base_address + original_module.mem_info.size;
+            let original = original_module.mem_info.base_address..(original_module.mem_info.base_address + original_module.mem_info.size);
             let current = (*agent.agent).sv_get_status_func(
                 &L2CValue::I32(info.status.get()),
                 &L2CValue::I32(info.condition.get())
@@ -425,14 +464,25 @@ pub unsafe fn remove_live_acmd_scripts(range: (usize, usize)) {
     }
 }
 
+pub unsafe fn remove_live_status_waza(range: (usize, usize)) {
+    let (begin, end) = range;
+    let agents = LOADED_STATUS_AGENTS.lock();
+    let wazas = STATUS_CUSTOMIZERS.lock();
+    for agent in agents.iter() {
+        if let Some(waza) = wazas.get(&agent.hash) {
+            (*(agent.agent as *mut smash::lua2cpp::L2CFighterCommon)).global_table[0x3D].assign(&L2CValue::Ptr(waza.backup as _));
+        }
+    }
+}
+
 pub unsafe fn remove_live_status_scripts(range: (usize, usize)) {
     let (begin, end) = range;
     let agents = LOADED_STATUS_AGENTS.lock();
-    let scripts = STATUS_SCRIPTS.lock();
-    let common_scripts = COMMON_STATUS_SCRIPTS.lock();
+    let mut scripts = STATUS_SCRIPTS.lock();
+    let mut common_scripts = COMMON_STATUS_SCRIPTS.lock();
     for agent in agents.iter() {
-        if let Some(script_list) = scripts.get(&agent.hash) {
-            for script in script_list.iter() {
+        if let Some(script_list) = scripts.get_mut(&agent.hash) {
+            for script in script_list.iter_mut() {
                 let as_usize = script.replacement as *const () as usize;
                 if begin <= as_usize && as_usize < end {
                     (*agent.agent).sv_set_status_func(
@@ -443,8 +493,8 @@ pub unsafe fn remove_live_status_scripts(range: (usize, usize)) {
                 }
             }
         }
-        if let Some(script_list) = common_scripts.get(&Hash40::new("common")) {
-            for script in script_list.iter() {
+        if let Some(script_list) = common_scripts.get_mut(&Hash40::new("common")) {
+            for script in script_list.iter_mut () {
                 let as_usize = script.replacement as *const () as usize;
                 if begin <= as_usize && as_usize < end {
                     (*agent.agent).sv_set_status_func(

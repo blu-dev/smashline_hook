@@ -51,6 +51,9 @@ impl DevelopmentPlugin {
             }
         };
 
+        // TEMP
+        let nro_image_size = nro_image.len();
+
         let nro_image = {
             let new_mem = libc::memalign(0x1000, nro_image.len()) as *mut u8;
             std::ptr::copy_nonoverlapping(nro_image.as_ptr(), new_mem, nro_image.len());
@@ -103,7 +106,7 @@ impl DevelopmentPlugin {
         let mut nro_module = MaybeUninit::uninit();
         let rc = ro::LoadModule(nro_module.as_mut_ptr(), nro_image, bss_section, bss_size as u64, ro::BindFlag_BindFlag_Now as i32);
         if rc == 0 {
-            println!("[smashline::loader] Successfuly loaded development plugin");
+            println!("[smashline::loader] Successfuly loaded development plugin in range ({:#x} - {:#x})", nro_image as u64, nro_image_size + nro_image as usize);
         } else {
             println!("[smashline::loader] Failed to load development plugin ({:#x})", rc);
         }

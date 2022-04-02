@@ -32,9 +32,13 @@ pub enum LuaConstant {
 }
 
 impl LuaConstant {
-    pub fn get(&self) -> i32 {
+    pub fn get(&mut self) -> i32 {
         match self {
-            LuaConstant::Symbolic(symbolic) => **symbolic,
+            LuaConstant::Symbolic(symbolic) => {
+                let val = **symbolic;
+                *self = LuaConstant::Evaluated(val);
+                val
+            },
             LuaConstant::Evaluated(evaluated) => *evaluated
         }
     }
