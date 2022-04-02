@@ -119,6 +119,7 @@ pub fn main() {
                             load_flag = true;
                             break;
                         }
+                        let mut npad_state = NpadGcState::default();
                         GetNpadGcState(&mut npad_state, &x);
                         if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
                             loader::load_development_plugin();

@@ -57,7 +57,10 @@ static mut UNWIND_CURSOR_STEP_ADDRESS: usize = 0;
 static mut BAD_INFO_CHECK_ADDRESS: usize = 0;
 
 static OFFSET_INIT: std::sync::Once = std::sync::Once::new();
-static CUSTOM_EH_MEM: Mutex<Vec<nx::QueryMemoryResult>> = Mutex::new(Vec::new());
+
+lazy_static! {
+    static ref CUSTOM_EH_MEM: Mutex<Vec<nx::QueryMemoryResult>> = Mutex::new(Vec::new());
+}
 
 #[skyline::hook(replace = libc::abort)]
 fn abort_hook() -> ! {
