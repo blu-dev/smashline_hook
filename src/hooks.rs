@@ -31,7 +31,7 @@ pub fn nro_load(nro_info: &NroInfo) {
     if let Some(hooks) = map.get_mut(nro_info.name) {
         for hook in hooks.iter_mut() {
             unsafe {
-                lazy_symbol_replace(nro_info.module.ModuleObject, hook.symbol.as_str(), hook.replace, hook.original.as_mut());
+                lazy_symbol_replace(nro_info.module.ModuleObject as *mut ModuleObject, hook.symbol.as_str(), hook.replace, hook.original.as_mut());
             }
         }
     }

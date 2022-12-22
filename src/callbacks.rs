@@ -40,12 +40,14 @@ unsafe impl Send for WeaponFrameInfo {}
 lazy_static! {
     static ref FIGHTER_FRAMES: Mutex<Vec<FighterFrameInfo>> = Mutex::new(Vec::new());
     static ref WEAPON_FRAMES: Mutex<Vec<WeaponFrameInfo>> = Mutex::new(Vec::new());
+    static ref AGENT_FRAMES_MAIN: Mutex<Vec<WeaponFrameInfo>> = Mutex::new(Vec::new());
 
     static ref FIGHTER_RESETS: Mutex<Vec<FighterReset>> = Mutex::new(Vec::new());
     static ref AGENT_RESETS: Mutex<Vec<AgentReset>> = Mutex::new(Vec::new());
 
     static ref FIGHTER_FRAME_CALLBACKS: Mutex<Vec<FighterFrameCallback>> = Mutex::new(Vec::new());
     static ref WEAPON_FRAME_CALLBACKS: Mutex<Vec<WeaponFrameCallback>> = Mutex::new(Vec::new());
+    static ref AGENT_FRAME_MAIN_CALLBACKS: Mutex<Vec<WeaponFrameCallback>> = Mutex::new(Vec::new());
 
     static ref FIGHTER_INIT_CALLBACKS: Mutex<Vec<FighterInit>> = Mutex::new(Vec::new());
     static ref AGENT_INIT_CALLBACKS: Mutex<Vec<AgentInit>> = Mutex::new(Vec::new());
@@ -53,6 +55,7 @@ lazy_static! {
 
 static mut SHOULD_INSTALL_FIGHTER_CB: bool = false;
 static mut SHOULD_INSTALL_WEAPON_CB: bool = false;
+static mut SHOULD_INSTALL_AGENT_MAIN_CB: bool = false;
 
 // These symbols must be used since they are passed va_lists
 // call_check_attack, for example, does not take a va_list
@@ -132,6 +135,32 @@ unsafe extern "C" fn sys_line_system_init_replace(agent: &mut L2CFighterBase) ->
     func(agent)
 }
 
+unsafe extern "C" fn sys_line_status_system_init_replace(agent: &mut L2CFighterBase) -> L2CValue {
+    use std::mem::transmute;
+
+    for callback in AGENT_INIT_CALLBACKS.lock().iter() {
+        callback(agent);
+    }
+
+    let mut sys_line_status_system_control = 0usize;
+    skyline::nn::ro::LookupSymbol(&mut sys_line_status_system_control, c_str!("_ZN7lua2cpp14L2CFighterBase30sys_line_status_system_controlEv"));
+    let mut status_system_control = L2CValue::Ptr(transmute(sys_line_status_system_control as *const ()));
+    let mut agent_frames_main = AGENT_FRAMES_MAIN.lock();
+    for frame_info in agent_frames_main.iter_mut() {
+        if frame_info.agent.get() == smash::app::utility::get_kind(&mut *agent.module_accessor) {
+            if let Some(original) = frame_info.original.as_mut() {
+                let og = status_system_control.get_ptr() as *const extern "C" fn();
+                **original = og;
+            }
+            status_system_control = L2CValue::Ptr(transmute(frame_info.frame as *const ()));
+        }
+    }
+    drop(agent_frames_main);
+    agent.shift(status_system_control.clone());
+    let func: extern "C" fn(&mut L2CFighterBase) -> L2CValue = transmute(status_system_control.get_ptr());
+    func(agent)
+}
+
 #[skyline::hook(replace = L2CFighterCommon_RESET)]
 fn fighter_reset(fighter: &mut L2CFighterCommon) {
     for callback in FIGHTER_RESETS.lock().iter() {
@@ -162,6 +191,15 @@ fn weapon_frame_callbacks(weapon: &mut L2CFighterBase) -> L2CValue {
     let ret = call_original!(weapon);
     for cb in WEAPON_FRAME_CALLBACKS.lock().iter() {
         cb(weapon);
+    }
+    ret
+}
+
+#[skyline::hook(replace = L2CFighterBase_sys_line_status_system_control)]
+fn agent_frame_main_callbacks(agent: &mut L2CFighterBase) -> L2CValue {
+    let ret = call_original!(agent);
+    for cb in AGENT_FRAME_MAIN_CALLBACKS.lock().iter() {
+        cb(agent);
     }
     ret
 }
@@ -207,6 +245,18 @@ pub fn remove_fighter_frame_callbacks(range: (usize, usize)) {
 pub fn remove_weapon_frame_callbacks(range: (usize, usize)) {
     let range = range.0..range.1;
     let mut callbacks = WEAPON_FRAME_CALLBACKS.lock();
+    let mut new_callbacks = Vec::with_capacity(callbacks.len());
+    for callback in callbacks.iter() {
+        if !range.contains(&(*callback as *const () as usize)) {
+            new_callbacks.push(*callback);
+        }
+    }
+    *callbacks = new_callbacks;
+}
+
+pub fn remove_agent_frame_main_callbacks(range: (usize, usize)) {
+    let range = range.0..range.1;
+    let mut callbacks = AGENT_FRAME_MAIN_CALLBACKS.lock();
     let mut new_callbacks = Vec::with_capacity(callbacks.len());
     for callback in callbacks.iter() {
         if !range.contains(&(*callback as *const () as usize)) {
@@ -263,6 +313,17 @@ pub extern "Rust" fn replace_weapon_frame(agent: LuaConstant, original: Option<&
 }
 
 #[no_mangle]
+pub extern "Rust" fn replace_agent_frame_main(agent: LuaConstant, original: Option<&'static mut *const extern "C" fn()>, replacement: WeaponFrame) {
+    let info = WeaponFrameInfo {
+        agent,
+        original,
+        frame: replacement
+    };
+    let mut agent_frames_main = AGENT_FRAMES_MAIN.lock();
+    agent_frames_main.push(info);
+}
+
+#[no_mangle]
 pub extern "Rust" fn add_fighter_reset_callback(callback: FighterReset) {
     FIGHTER_RESETS.lock().push(callback);
 }
@@ -301,6 +362,20 @@ pub extern "Rust" fn add_weapon_frame_callback(callback: WeaponFrameCallback) {
 }
 
 #[no_mangle]
+pub extern "Rust" fn add_agent_frame_main_callback(callback: WeaponFrameCallback) {
+    static SHOULD_INSTALL: std::sync::Once = std::sync::Once::new();
+    SHOULD_INSTALL.call_once(|| {
+        unsafe {
+            SHOULD_INSTALL_AGENT_MAIN_CB = true;
+            if let Some(_) = crate::COMMON_MEMORY_INFO.as_ref() {
+                skyline::install_hook!(agent_frame_main_callbacks);
+            }
+        }
+    });
+    AGENT_FRAME_MAIN_CALLBACKS.lock().push(callback);
+}
+
+#[no_mangle]
 pub extern "Rust" fn add_fighter_init_callback(callback: FighterInit) {
     FIGHTER_INIT_CALLBACKS.lock().push(callback);
 }
@@ -313,6 +388,7 @@ pub extern "Rust" fn add_agent_init_callback(callback: AgentInit) {
 fn install() {
     crate::hooks::replace_symbol("common", "_ZN7lua2cpp16L2CFighterCommon20sys_line_system_initEv", sys_line_system_fighter_init_replace as *const extern "C" fn(), None);
     crate::hooks::replace_symbol("common", "_ZN7lua2cpp14L2CFighterBase20sys_line_system_initEv", sys_line_system_init_replace as *const extern "C" fn(), None);
+    crate::hooks::replace_symbol("common", "_ZN7lua2cpp14L2CFighterBase27sys_line_status_system_initEv", sys_line_status_system_init_replace as *const extern "C" fn(), None);
     skyline::install_hooks!(
         fighter_reset,
         agent_reset
@@ -324,6 +400,9 @@ fn install() {
         }
         if SHOULD_INSTALL_WEAPON_CB {
             skyline::install_hook!(weapon_frame_callbacks);
+        }
+        if SHOULD_INSTALL_AGENT_MAIN_CB {
+            skyline::install_hook!(agent_frame_main_callbacks);
         }
     }
 }
