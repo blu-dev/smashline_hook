@@ -358,7 +358,7 @@ pub extern "Rust" fn add_fighter_frame_callback(callback: FighterFrameCallback) 
         unsafe {
             SHOULD_INSTALL_FIGHTER_CB = true;
             if let Some(_) = crate::COMMON_MEMORY_INFO.as_ref() {
-                //skyline::install_hook!(fighter_frame_callbacks);
+                skyline::install_hook!(fighter_frame_callbacks);
             }
         }
     });
@@ -372,7 +372,7 @@ pub extern "Rust" fn add_weapon_frame_callback(callback: AgentFrameCallback) {
         unsafe {
             SHOULD_INSTALL_WEAPON_CB = true;
             if let Some(_) = crate::COMMON_MEMORY_INFO.as_ref() {
-                //skyline::install_hook!(weapon_frame_callbacks);
+                skyline::install_hook!(weapon_frame_callbacks);
             }
         }
     });
@@ -386,7 +386,7 @@ pub extern "Rust" fn add_agent_frame_main_callback(callback: AgentFrameCallback)
         unsafe {
             SHOULD_INSTALL_AGENT_MAIN_CB = true;
             if let Some(_) = crate::COMMON_MEMORY_INFO.as_ref() {
-                //skyline::install_hook!(agent_frame_main_callbacks);
+                skyline::install_hook!(agent_frame_main_callbacks);
             }
         }
     });
