@@ -1,7 +1,6 @@
 #![feature(proc_macro_hygiene)]
-#![feature(asm)]
 #![allow(unused_imports)]
-#![feature(const_if_match)]
+#![allow(non_camel_case_types)]
 
 #[macro_use]
 extern crate lazy_static;
@@ -13,6 +12,7 @@ extern crate paste;
 use skyline::{hook, install_hook};
 use skyline::nro::NroInfo;
 use smash::lib::LuaConst;
+use core::arch::asm;
 
 mod acmd;
 mod callbacks;
@@ -48,7 +48,7 @@ impl LuaConstant {
 #[macro_export]
 macro_rules! c_str {
     ($l:tt) => {
-        [$l.as_bytes(), "\u{0}".as_bytes()].concat().as_ptr();
+        [$l.as_bytes(), "\u{0}".as_bytes()].concat().as_ptr()
     }
 }
 

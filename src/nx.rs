@@ -92,7 +92,7 @@ pub mod svc {
         let mut res: NxResult = NxResult(0);
         let mut mem_info: MemoryInfo = unsafe { std::mem::zeroed() };
         let svc_result = unsafe {
-            let mem_info_ptr = &mut mem_info as *mut MemoryInfo;;
+            let mem_info_ptr = &mut mem_info as *mut MemoryInfo;
             let mut page_info: PageInfo = PageInfo { flags: 0 };
             asm!("svc 0x6", lateout("w0") res.0, out("w1") page_info.flags, in("x0") mem_info_ptr, in("x2") address, options(nostack));
             // asm!("svc 0x6" : "={w0}" (res), "={w1}" (page_info) : "{x0}" (mem_info_ptr), "{x2}" (address) : : "volatile");

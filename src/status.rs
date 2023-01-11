@@ -218,7 +218,7 @@ pub extern "Rust" fn replace_move_customizer(agent: Hash40, original: Option<&'s
     }
 
     if let Some(waza_info) = customizers.get_mut(&agent) {
-        if (waza_info.low_priority) {
+        if waza_info.low_priority {
             *waza_info = info.transfer();
         } else {
             println!("[smashline::status] Status specializer (WAZA Customizer) has already been replaced and is not low priority | Agent: {:#x}", agent.hash);
