@@ -16,7 +16,7 @@ skyline = { git = "https://github.com/ultimate-research/skyline-rs.git", feature
 # skyline_smash = { git = "https://github.com/blu-dev/skyline-smash.git", branch = "l2c-values", features = ["weak_l2cvalue"] }
 skyline_smash = { git = "https://github.com/ultimate-research/skyline-smash.git", features = ["weak_l2cvalue"] }
 nnsdk = { git = "https://github.com/ultimate-research/nnsdk-rs" }
-parking_lot = { version = "0.11.1", features = ["nightly"] }
+parking_lot = { version = "0.12.1", features = ["nightly"] }
 lazy_static = "1.4.0"
 bitflags = "1.2.1"
 aarch64-decode = { git = "https://github.com/jam1garner/aarch64-decode.git", rev = "99475256e779677df456b3ec37de258d1697b97d" }
@@ -32,3 +32,6 @@ lto = true
 [features]
 standalone = []
 development = ["standalone"]
+
+[patch.crates-io]
+nnsdk = { git = "https://github.com/ultimate-research/nnsdk-rs" }

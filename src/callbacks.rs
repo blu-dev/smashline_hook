@@ -137,6 +137,7 @@ fn fighter_reset(fighter: &mut L2CFighterCommon) {
     for callback in FIGHTER_RESETS.lock().iter() {
         callback(fighter)
     }
+    original!()(fighter)
 }
 
 #[skyline::hook(replace = L2CFighterBase_RESET)]
@@ -144,6 +145,7 @@ fn agent_reset(agent: &mut L2CFighterBase) {
     for callback in AGENT_RESETS.lock().iter() {
         callback(agent)
     }
+    original!()(agent)
 }
 
 #[skyline::hook(replace = L2CFighterCommon_sys_line_system_control_fighter)]

@@ -52,7 +52,7 @@ pub unsafe fn get_symbol_by_resolved_address(module_object: *const ModuleObject,
     // this is slow and should be avoided at all costs
     let module_object = &*module_object;
     let difference = (address as u64) - module_object.module_base;
-    for i in (0..module_object.hash_nbucket_value) {
+    for i in 0..module_object.hash_nbucket_value {
         let mut j = *module_object.hash_bucket.offset(i as isize);
         while j != 0 {
             let sym = &*module_object.dynsym.offset(j as isize);

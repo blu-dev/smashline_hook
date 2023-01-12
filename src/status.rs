@@ -9,6 +9,7 @@ use crate::LuaConstant;
 lazy_static! {
     pub static ref STATUS_SCRIPTS: Mutex<HashMap<Hash40, Vec<StatusInfo>>> = Mutex::new(HashMap::new());
     pub static ref COMMON_STATUS_SCRIPTS: Mutex<HashMap<Hash40, Vec<StatusInfo>>> = Mutex::new(HashMap::new());
+    pub static ref STATUS_CUSTOMIZERS: Mutex<HashMap<Hash40, StatusWazaInfo>> = Mutex::new(HashMap::new());
 }
 
 pub struct StatusInfo {
@@ -18,6 +19,13 @@ pub struct StatusInfo {
     pub low_priority: bool,
     pub replacement: *const extern "C" fn(),
     pub backup: *const extern "C" fn()
+}
+
+pub struct StatusWazaInfo {
+    pub replacement: *const extern "C" fn(),
+    pub original: Option<&'static mut *const extern "C" fn()>,
+    pub backup: *const extern "C" fn(),
+    pub low_priority: bool
 }
 
 impl StatusInfo {
@@ -33,12 +41,26 @@ impl StatusInfo {
     }
 }
 
+impl StatusWazaInfo {
+    pub fn transfer(&mut self) -> Self {
+        Self {
+            replacement: self.replacement,
+            original: self.original.take(),
+            low_priority: self.low_priority,
+            backup: self.backup
+        }
+    }
+}
+
 unsafe impl Sync for StatusInfo {}
 unsafe impl Send for StatusInfo {}
 
-static mut CONSTANT_RESOLVER: Option<fn(&LuaConstant, &LuaConstant) -> bool> = None;
+unsafe impl Sync for StatusWazaInfo {}
+unsafe impl Send for StatusWazaInfo {}
 
-fn const_resolver(this: &LuaConstant, that: &LuaConstant) -> bool {
+static mut CONSTANT_RESOLVER: Option<fn(&mut LuaConstant, &mut LuaConstant) -> bool> = None;
+
+fn const_resolver(this: &mut LuaConstant, that: &mut LuaConstant) -> bool {
     let this = this.get();
     let that = that.get();
     this == that
@@ -100,8 +122,8 @@ pub fn nro_load(info: &NroInfo) {
                             low_priority.push(status_info.transfer());
                         } else {
                             let mut is_unique = true;
-                            for high_info in high_priority.iter() {
-                                if const_resolver(&high_info.status, &status_info.status) && const_resolver(&high_info.condition, &status_info.condition) {
+                            for high_info in high_priority.iter_mut() {
+                                if const_resolver(&mut high_info.status, &mut status_info.status) && const_resolver(&mut high_info.condition, &mut status_info.condition) {
                                     println!("[smashline::status] Status script already replaced with high priority | Status: {:#x}, condition: {:#x}", high_info.status.get(), high_info.condition.get());
                                     is_unique = false;
                                     break;
@@ -116,10 +138,10 @@ pub fn nro_load(info: &NroInfo) {
                     // I'm sorry y'all, it has to be done
                     let mut output: Vec<StatusInfo> = Vec::new();
     
-                    for low_info in low_priority.into_iter() {
+                    for mut low_info in low_priority.into_iter() {
                         let mut is_unique = true;
-                        for high_info in high_priority.iter() {
-                            if const_resolver(&high_info.status, &low_info.status) && const_resolver(&high_info.condition, &low_info.condition) {
+                        for high_info in high_priority.iter_mut() {
+                            if const_resolver(&mut high_info.status, &mut low_info.status) && const_resolver(&mut high_info.condition, &mut low_info.condition) {
                                 println!("[smashline::status] Status script already replaced with high priority | Status: {:#x}, condition: {:#x}", high_info.status.get(), high_info.condition.get());
                                 is_unique = false;
                                 break;
@@ -127,7 +149,7 @@ pub fn nro_load(info: &NroInfo) {
                         }
                         if is_unique {
                             for output_info in output.iter_mut() {
-                                if const_resolver(&low_info.status, &output_info.status) && const_resolver(&low_info.condition, &output_info.status) {
+                                if const_resolver(&mut low_info.status, &mut output_info.status) && const_resolver(&mut low_info.condition, &mut output_info.status) {
                                     *output_info = low_info;
                                     break;
                                 }
@@ -155,6 +177,7 @@ pub fn nro_unload(info: &NroInfo) {
 
 pub unsafe fn remove_status_scripts(range: (usize, usize)) {
     crate::scripts::remove_live_status_scripts(range);
+    crate::scripts::remove_live_status_waza(range);
 
     let range = range.0..range.1;
     let mut scripts = STATUS_SCRIPTS.lock();
@@ -180,6 +203,32 @@ pub unsafe fn remove_status_scripts(range: (usize, usize)) {
 }
 
 #[no_mangle]
+pub extern "Rust" fn replace_move_customizer(agent: Hash40, original: Option<&'static mut *const extern "C" fn()>, low_priority: bool, replacement: *const extern "C" fn()) {
+    let mut info = StatusWazaInfo {
+        original,
+        replacement,
+        low_priority,
+        backup: 0 as _
+    };
+
+    let mut customizers = STATUS_CUSTOMIZERS.lock();
+
+    unsafe {
+        crate::scripts::install_live_status_waza(agent, &mut info);
+    }
+
+    if let Some(waza_info) = customizers.get_mut(&agent) {
+        if waza_info.low_priority {
+            *waza_info = info.transfer();
+        } else {
+            println!("[smashline::status] Status specializer (WAZA Customizer) has already been replaced and is not low priority | Agent: {:#x}", agent.hash);
+        }
+    } else {
+        customizers.insert(agent, info);
+    }
+}
+
+#[no_mangle]
 pub extern "Rust" fn replace_status_script(agent: Hash40, status: LuaConstant, condition: LuaConstant, original: Option<&'static mut *const extern "C" fn()>, low_priority: bool, replacement: *const extern "C" fn()) {
     let mut info = StatusInfo {
         status,
@@ -201,7 +250,7 @@ pub extern "Rust" fn replace_status_script(agent: Hash40, status: LuaConstant, c
         unsafe {
             if let Some(resolver) = CONSTANT_RESOLVER.as_ref() {
                 for script in script_list.iter_mut() {
-                    if (resolver)(&script.status, &info.status) && (resolver)(&script.condition, &info.condition) {
+                    if (resolver)(&mut script.status, &mut info.status) && (resolver)(&mut script.condition, &mut info.condition) {
                         if script.low_priority {
                             *script = info;
                         } else {
@@ -239,7 +288,7 @@ pub extern "Rust" fn replace_common_status_script(status: LuaConstant, condition
         unsafe {
             if let Some(resolver) = CONSTANT_RESOLVER.as_ref() {
                 for script in script_list.iter_mut() {
-                    if (resolver)(&script.status, &info.status) && (resolver)(&script.condition, &info.condition) {
+                    if (resolver)(&mut script.status, &mut info.status) && (resolver)(&mut script.condition, &mut info.condition) {
                         if script.low_priority {
                             *script = info;
                         } else {

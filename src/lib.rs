@@ -1,7 +1,6 @@
 #![feature(proc_macro_hygiene)]
-#![feature(asm)]
 #![allow(unused_imports)]
-#![feature(const_if_match)]
+#![allow(non_camel_case_types)]
 
 #[macro_use]
 extern crate lazy_static;
@@ -13,6 +12,7 @@ extern crate paste;
 use skyline::{hook, install_hook};
 use skyline::nro::NroInfo;
 use smash::lib::LuaConst;
+use core::arch::asm;
 
 mod acmd;
 mod callbacks;
@@ -32,9 +32,13 @@ pub enum LuaConstant {
 }
 
 impl LuaConstant {
-    pub fn get(&self) -> i32 {
+    pub fn get(&mut self) -> i32 {
         match self {
-            LuaConstant::Symbolic(symbolic) => **symbolic,
+            LuaConstant::Symbolic(symbolic) => {
+                let val = **symbolic;
+                *self = LuaConstant::Evaluated(val);
+                val
+            },
             LuaConstant::Evaluated(evaluated) => *evaluated
         }
     }
@@ -44,7 +48,7 @@ impl LuaConstant {
 #[macro_export]
 macro_rules! c_str {
     ($l:tt) => {
-        [$l.as_bytes(), "\u{0}".as_bytes()].concat().as_ptr();
+        [$l.as_bytes(), "\u{0}".as_bytes()].concat().as_ptr()
     }
 }
 
@@ -115,6 +119,7 @@ pub fn main() {
                             load_flag = true;
                             break;
                         }
+                        let mut npad_state = NpadGcState::default();
                         GetNpadGcState(&mut npad_state, &x);
                         if (npad_state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
                             loader::load_development_plugin();

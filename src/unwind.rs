@@ -57,7 +57,10 @@ static mut UNWIND_CURSOR_STEP_ADDRESS: usize = 0;
 static mut BAD_INFO_CHECK_ADDRESS: usize = 0;
 
 static OFFSET_INIT: std::sync::Once = std::sync::Once::new();
-static CUSTOM_EH_MEM: Mutex<Vec<nx::QueryMemoryResult>> = Mutex::new(Vec::new());
+
+lazy_static! {
+    static ref CUSTOM_EH_MEM: Mutex<Vec<nx::QueryMemoryResult>> = Mutex::new(Vec::new());
+}
 
 #[skyline::hook(replace = libc::abort)]
 fn abort_hook() -> ! {
@@ -92,14 +95,14 @@ unsafe fn set_info_based_on_ip_register(arg1: *mut u64, arg2: bool) {
     callable(arg1, arg2)
 }
 
-fn is_custom_eh_mem(ip: usize) -> bool {
+fn is_custom_eh_mem(ip: usize) -> Option<(usize, usize)> {
     let custom_mems = CUSTOM_EH_MEM.lock();
     for mem in custom_mems.iter() {
         if mem.mem_info.base_address <= ip && ip < (mem.mem_info.base_address + mem.mem_info.size) {
-            return true;
+            return Some((mem.mem_info.base_address, mem.mem_info.base_address + mem.mem_info.size));
         }
     }
-    false
+    None
 }
 
 unsafe fn byte_search(start: *const u32, want: u32, distance: usize) -> Option<*const u32> {
@@ -122,12 +125,12 @@ unsafe extern "C" fn custom_eh_personality(version: i32, actions: u64, _: u64, _
         ret = _URC_HANDLER_FOUND;
     } else {
         let ip = _Unwind_GetIP(context);
-        if !is_custom_eh_mem(ip as usize) {
+        if is_custom_eh_mem(ip as usize).is_none() {
             panic!("Custom EH personality routine said it found an exception handler, but it is not inside a skyline plugin.");
         }
         let unwind_info_ptr = context.add(0x44);
         let landing_pad = *unwind_info_ptr.add(1) + 4;
-        if !is_custom_eh_mem(landing_pad as usize) {
+        if is_custom_eh_mem(landing_pad as usize).is_none() {
             panic!("Custom EH personality routine found landing pad, but it is not inside a skyline plugin.");
         }
         _Unwind_SetIP(context, landing_pad);
@@ -150,8 +153,13 @@ unsafe fn step_replace(this: *mut u64) -> u64 {
     let result = step_with_dwarf(address_space, ip, unwind_info, registers);
     if result == UNW_STEP_SUCCESS {
         let ip = _Unwind_GetIP(this) as usize;
-        if is_custom_eh_mem(ip) {
-            let pc_end = byte_search(ip as *const u32, 0xB000B1E5, 0x2000).expect("Stack unwinding passing through skyline plugin with no eh marker.");
+        if let Some(range) = is_custom_eh_mem(ip) {
+            let pc_end = match byte_search(ip as *const u32, 0xB000B1E5, 0x2000) {
+                Some(val) => val,
+                None => {
+                    panic!("Stack unwinding passing through skyline plugin with no eh marker. Address range: ({:#x} - {:#x})", range.0, range.1);
+                }
+            };
             let unwind_info_ptr = this.add(0x44);
             *unwind_info_ptr.add(0) = ip as u64;
             *unwind_info_ptr.add(1) = pc_end as u64;
@@ -171,7 +179,7 @@ unsafe fn step_replace(this: *mut u64) -> u64 {
 unsafe fn prevent_bad_info_check(ctx: &mut InlineCtx) {
     fn stub() {}
     let ip = _Unwind_GetIP(*ctx.registers[0].x.as_ref() as *const u64) as usize;
-    if is_custom_eh_mem(ip) {
+    if let Some(_) = is_custom_eh_mem(ip) {
         *ctx.registers[8].x.as_mut() = std::mem::transmute(stub as *const ());
     }
 }
