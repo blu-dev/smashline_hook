@@ -2,6 +2,8 @@
 // The following code is taken from the WIP skyline rust-rewrite to assist in symbol hooking
 // the static modules
 
+use core::arch::asm;
+
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct NxResult(u32);

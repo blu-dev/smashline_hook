@@ -58,7 +58,7 @@ impl DevelopmentPlugin {
             let new_mem = libc::memalign(0x1000, nro_image.len()) as *mut u8;
             std::ptr::copy_nonoverlapping(nro_image.as_ptr(), new_mem, nro_image.len());
             new_mem as *const libc::c_void
-        };
+        } as *const u8;
 
         let mut bss_size = 0u64;
         let rc = nn::ro::GetBufferSize(&mut bss_size, nro_image);
@@ -102,7 +102,7 @@ impl DevelopmentPlugin {
         }
         let nrr_info = nrr_info.assume_init();
 
-        let bss_section = libc::memalign(0x1000, bss_size);
+        let bss_section = libc::memalign(0x1000, bss_size) as *mut _;
         let mut nro_module = MaybeUninit::uninit();
         let rc = ro::LoadModule(nro_module.as_mut_ptr(), nro_image, bss_section, bss_size as u64, ro::BindFlag_BindFlag_Now as i32);
         if rc == 0 {
