@@ -1,6 +1,7 @@
 use smash::lua2cpp::*;
 use smash::lib::{LuaConst, L2CValue, lua_const::{BATTLE_OBJECT_CATEGORY_FIGHTER, BATTLE_OBJECT_CATEGORY_WEAPON}};
 use smash::phx::Hash40;
+use smash::app::lua_bind::StatusModule;
 
 use skyline::nro::NroInfo;
 
@@ -215,8 +216,12 @@ fn weapon_frame_callbacks(weapon: &mut L2CFighterBase) -> L2CValue {
 #[skyline::hook(replace = L2CFighterBase_sys_line_status_system_control)]
 fn agent_frame_main_callbacks(agent: &mut L2CFighterBase) -> L2CValue {
     let ret = call_original!(agent);
-    for cb in AGENT_FRAME_MAIN_CALLBACKS.lock().iter() {
-        cb(agent);
+    unsafe {
+        if !StatusModule::is_changing(agent.module_accessor) {
+            for cb in AGENT_FRAME_MAIN_CALLBACKS.lock().iter() {
+                cb(agent);
+            }
+        }
     }
     ret
 }
