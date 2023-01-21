@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use nnsdk::root::{Elf64_Sym, rtld::ModuleObject};
 
 use aarch64_decode::*;
 use skyline::nro::NroInfo;
@@ -279,7 +280,7 @@ pub fn patch_create_agent_animcmd(info: &NroInfo, category: Category) {
                 let [<$cat _share>] = format_create_agent_symbol(info.name, $shared);
                 unsafe {
                     ORIGINAL = 0 as _;
-                    lazy_symbol_replace(info.module.ModuleObject, $cat.as_str(), [<create_agent_fighter_animcmd_ $cat>] as *const _, original_opt.as_mut());
+                    lazy_symbol_replace(info.module.ModuleObject as *mut ModuleObject, $cat.as_str(), [<create_agent_fighter_animcmd_ $cat>] as *const _, original_opt.as_mut());
                     if !ORIGINAL.is_null() {
                         let mut map = $unshared_create_agents.lock();
                         map.insert(
@@ -291,7 +292,7 @@ pub fn patch_create_agent_animcmd(info: &NroInfo, category: Category) {
                         );
                     }
                     ORIGINAL = 0 as _;
-                    lazy_symbol_replace(info.module.ModuleObject, [<$cat _share>].as_str(), [<create_agent_fighter_animcmd_ $cat _share>] as *const _, original_opt.as_mut());
+                    lazy_symbol_replace(info.module.ModuleObject as *mut ModuleObject, [<$cat _share>].as_str(), [<create_agent_fighter_animcmd_ $cat _share>] as *const _, original_opt.as_mut());
                     if !ORIGINAL.is_null() {
                         let mut map = $shared_create_agents.lock();
                         map.insert(
@@ -329,7 +330,7 @@ pub fn patch_create_agent_status(info: &NroInfo) {
     let status = format_create_agent_symbol(info.name, "status_script");
     unsafe {
         ORIGINAL = 0 as _;
-        lazy_symbol_replace(info.module.ModuleObject, status.as_str(), create_agent_fighter_status_script as *const extern "C" fn(), original_opt.as_mut());
+        lazy_symbol_replace(info.module.ModuleObject as *mut ModuleObject, status.as_str(), create_agent_fighter_status_script as *const extern "C" fn(), original_opt.as_mut());
         if !ORIGINAL.is_null() {
             let mut agents = STATUS_CREATE_AGENTS.lock();
             agents.insert(

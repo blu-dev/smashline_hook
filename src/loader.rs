@@ -162,6 +162,7 @@ impl DevelopmentPlugin {
         crate::callbacks::remove_agent_resets(range);
         crate::callbacks::remove_fighter_frame_callbacks(range);
         crate::callbacks::remove_weapon_frame_callbacks(range);
+        crate::callbacks::remove_agent_frame_main_callbacks(range);
         crate::callbacks::remove_fighter_init_callbacks(range);
         crate::callbacks::remove_agent_init_callbacks(range);
         crate::acmd::remove_acmd_scripts(range);

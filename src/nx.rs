@@ -1,4 +1,4 @@
-
+use std::arch::asm;
 // The following code is taken from the WIP skyline rust-rewrite to assist in symbol hooking
 // the static modules
 

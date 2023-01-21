@@ -10,6 +10,8 @@ extern crate bitflags;
 #[macro_use]
 extern crate paste;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use skyline::{hook, install_hook};
 use skyline::nro::NroInfo;
 use smash::lib::LuaConst;
@@ -74,6 +76,29 @@ fn nro_unload(info: &NroInfo) {
     status::nro_unload(info);
 }
 
+extern "C" {
+    #[link_name = "add_nn_hid_hook"]
+    fn add_nn_hid_hook(callback: extern "C" fn(&mut skyline::nn::hid::NpadHandheldState, &u32));
+}
+
+extern "C" fn hid_hook(state: &mut skyline::nn::hid::NpadHandheldState, id: &u32) {
+    static TIMER: AtomicUsize = AtomicUsize::new(0);
+    const KEY_L: u32 = 1 << 6;
+    const KEY_R: u32 = 1 << 7;
+    const KEY_DUP: u32 = 1 << 13;
+    const BUTTON_COMBO: u64 = (KEY_L | KEY_R | KEY_DUP) as u64;
+    if TIMER.load(Ordering::SeqCst) != 0 {
+        TIMER.fetch_sub(1, Ordering::SeqCst);
+        return;
+    }
+    if (state.Buttons & BUTTON_COMBO) == BUTTON_COMBO {
+        unsafe {
+            loader::load_development_plugin();
+        }
+        TIMER.store(500, Ordering::SeqCst);
+    } 
+}
+
 #[skyline::main(name = "smashline_hook")]
 pub fn main() {
     nro_hook::install();
@@ -83,6 +108,14 @@ pub fn main() {
     status::install();
     unwind::install();
     if cfg!(feature = "development") {
+        unsafe {
+            let mut symbol = 0usize;
+            skyline::nn::ro::LookupSymbol(&mut symbol, "add_nn_hid_hook\0".as_ptr());
+            if symbol != 0 {
+                add_nn_hid_hook(hid_hook);
+                return;
+            }
+        }
         unsafe {
             loader::load_development_plugin();
             std::thread::spawn(|| {

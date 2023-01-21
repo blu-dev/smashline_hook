@@ -1,6 +1,7 @@
 use smash::lua2cpp::*;
-use smash::lib::{LuaConst, L2CValue};
+use smash::lib::{LuaConst, L2CValue, lua_const::{BATTLE_OBJECT_CATEGORY_FIGHTER, BATTLE_OBJECT_CATEGORY_WEAPON}};
 use smash::phx::Hash40;
+use smash::app::lua_bind::StatusModule;
 
 use skyline::nro::NroInfo;
 
@@ -11,9 +12,9 @@ use std::collections::HashMap;
 use parking_lot::Mutex;
 
 type FighterFrame = extern "C" fn(&mut L2CFighterCommon) -> L2CValue;
-type WeaponFrame = extern "C" fn(&mut L2CFighterBase) -> L2CValue;
+type AgentFrame = extern "C" fn(&mut L2CFighterBase) -> L2CValue;
 type FighterFrameCallback = fn(&mut L2CFighterCommon);
-type WeaponFrameCallback = fn(&mut L2CFighterBase);
+type AgentFrameCallback = fn(&mut L2CFighterBase);
 type FighterReset = fn(&mut L2CFighterCommon);
 type AgentReset = fn(&mut L2CFighterBase);
 type FighterInit = fn(&mut L2CFighterCommon);
@@ -28,24 +29,36 @@ struct FighterFrameInfo {
 unsafe impl Sync for FighterFrameInfo {}
 unsafe impl Send for FighterFrameInfo {}
 
-struct WeaponFrameInfo {
+struct AgentFrameInfo {
     pub agent: LuaConstant,
     pub original: Option<&'static mut *const extern "C" fn()>,
-    pub frame: WeaponFrame
+    pub frame: AgentFrame
 }
 
-unsafe impl Sync for WeaponFrameInfo {}
-unsafe impl Send for WeaponFrameInfo {}
+unsafe impl Sync for AgentFrameInfo {}
+unsafe impl Send for AgentFrameInfo {}
+
+struct AgentFrameMainInfo {
+    pub agent: LuaConstant,
+    pub is_fighter: bool,
+    pub original: Option<&'static mut *const extern "C" fn()>,
+    pub frame: AgentFrame
+}
+
+unsafe impl Sync for AgentFrameMainInfo {}
+unsafe impl Send for AgentFrameMainInfo {}
 
 lazy_static! {
     static ref FIGHTER_FRAMES: Mutex<Vec<FighterFrameInfo>> = Mutex::new(Vec::new());
-    static ref WEAPON_FRAMES: Mutex<Vec<WeaponFrameInfo>> = Mutex::new(Vec::new());
+    static ref WEAPON_FRAMES: Mutex<Vec<AgentFrameInfo>> = Mutex::new(Vec::new());
+    static ref AGENT_FRAMES_MAIN: Mutex<Vec<AgentFrameMainInfo>> = Mutex::new(Vec::new());
 
     static ref FIGHTER_RESETS: Mutex<Vec<FighterReset>> = Mutex::new(Vec::new());
     static ref AGENT_RESETS: Mutex<Vec<AgentReset>> = Mutex::new(Vec::new());
 
     static ref FIGHTER_FRAME_CALLBACKS: Mutex<Vec<FighterFrameCallback>> = Mutex::new(Vec::new());
-    static ref WEAPON_FRAME_CALLBACKS: Mutex<Vec<WeaponFrameCallback>> = Mutex::new(Vec::new());
+    static ref WEAPON_FRAME_CALLBACKS: Mutex<Vec<AgentFrameCallback>> = Mutex::new(Vec::new());
+    static ref AGENT_FRAME_MAIN_CALLBACKS: Mutex<Vec<AgentFrameCallback>> = Mutex::new(Vec::new());
 
     static ref FIGHTER_INIT_CALLBACKS: Mutex<Vec<FighterInit>> = Mutex::new(Vec::new());
     static ref AGENT_INIT_CALLBACKS: Mutex<Vec<AgentInit>> = Mutex::new(Vec::new());
@@ -53,6 +66,7 @@ lazy_static! {
 
 static mut SHOULD_INSTALL_FIGHTER_CB: bool = false;
 static mut SHOULD_INSTALL_WEAPON_CB: bool = false;
+static mut SHOULD_INSTALL_AGENT_MAIN_CB: bool = false;
 
 // These symbols must be used since they are passed va_lists
 // call_check_attack, for example, does not take a va_list
@@ -71,6 +85,7 @@ extern "C" {
     fn call_calc_param();
 }
 
+#[skyline::hook(replace = L2CFighterCommon_sys_line_system_init)]
 unsafe extern "C" fn sys_line_system_fighter_init_replace(fighter: &mut L2CFighterCommon) -> L2CValue {
     use std::mem::transmute;
 
@@ -106,6 +121,7 @@ unsafe extern "C" fn sys_line_system_fighter_init_replace(fighter: &mut L2CFight
     func(fighter)
 }
 
+#[skyline::hook(replace = L2CFighterBase_sys_line_system_init)]
 unsafe extern "C" fn sys_line_system_init_replace(agent: &mut L2CFighterBase) -> L2CValue {
     use std::mem::transmute;
 
@@ -129,6 +145,37 @@ unsafe extern "C" fn sys_line_system_init_replace(agent: &mut L2CFighterBase) ->
     drop(weapon_frames);
     agent.shift(system_control.clone());
     let func: extern "C" fn(&mut L2CFighterBase) -> L2CValue = transmute(system_control.get_ptr());
+    func(agent)
+}
+
+#[skyline::hook(replace = L2CFighterBase_sys_line_status_system_init)]
+unsafe extern "C" fn sys_line_status_system_init_replace(agent: &mut L2CFighterBase) -> L2CValue {
+    use std::mem::transmute;
+
+    for callback in AGENT_INIT_CALLBACKS.lock().iter() {
+        callback(agent);
+    }
+
+    let mut sys_line_status_system_control = 0usize;
+    skyline::nn::ro::LookupSymbol(&mut sys_line_status_system_control, c_str!("_ZN7lua2cpp14L2CFighterBase30sys_line_status_system_controlEv"));
+    let mut status_system_control = L2CValue::Ptr(transmute(sys_line_status_system_control as *const ()));
+    let mut agent_frames_main = AGENT_FRAMES_MAIN.lock();
+    for frame_info in agent_frames_main.iter_mut() {
+        if (frame_info.is_fighter && smash::app::utility::get_category(&mut *agent.module_accessor) == *BATTLE_OBJECT_CATEGORY_FIGHTER)
+        || (!frame_info.is_fighter && smash::app::utility::get_category(&mut *agent.module_accessor) == *BATTLE_OBJECT_CATEGORY_WEAPON)
+        {
+            if frame_info.agent.get() == smash::app::utility::get_kind(&mut *agent.module_accessor) {
+                if let Some(original) = frame_info.original.as_mut() {
+                    let og = status_system_control.get_ptr() as *const extern "C" fn();
+                    **original = og;
+                }
+                status_system_control = L2CValue::Ptr(transmute(frame_info.frame as *const ()));
+            }
+        }
+    }
+    drop(agent_frames_main);
+    agent.shift(status_system_control.clone());
+    let func: extern "C" fn(&mut L2CFighterBase) -> L2CValue = transmute(status_system_control.get_ptr());
     func(agent)
 }
 
@@ -162,6 +209,19 @@ fn weapon_frame_callbacks(weapon: &mut L2CFighterBase) -> L2CValue {
     let ret = call_original!(weapon);
     for cb in WEAPON_FRAME_CALLBACKS.lock().iter() {
         cb(weapon);
+    }
+    ret
+}
+
+#[skyline::hook(replace = L2CFighterBase_sys_line_status_system_control)]
+fn agent_frame_main_callbacks(agent: &mut L2CFighterBase) -> L2CValue {
+    let ret = call_original!(agent);
+    unsafe {
+        if !StatusModule::is_changing(agent.module_accessor) {
+            for cb in AGENT_FRAME_MAIN_CALLBACKS.lock().iter() {
+                cb(agent);
+            }
+        }
     }
     ret
 }
@@ -216,6 +276,18 @@ pub fn remove_weapon_frame_callbacks(range: (usize, usize)) {
     *callbacks = new_callbacks;
 }
 
+pub fn remove_agent_frame_main_callbacks(range: (usize, usize)) {
+    let range = range.0..range.1;
+    let mut callbacks = AGENT_FRAME_MAIN_CALLBACKS.lock();
+    let mut new_callbacks = Vec::with_capacity(callbacks.len());
+    for callback in callbacks.iter() {
+        if !range.contains(&(*callback as *const () as usize)) {
+            new_callbacks.push(*callback);
+        }
+    }
+    *callbacks = new_callbacks;
+}
+
 pub fn remove_fighter_init_callbacks(range: (usize, usize)) {
     let range = range.0..range.1;
     let mut callbacks = FIGHTER_INIT_CALLBACKS.lock();
@@ -252,14 +324,26 @@ pub extern "Rust" fn replace_fighter_frame(agent: LuaConstant, original: Option<
 }
 
 #[no_mangle]
-pub extern "Rust" fn replace_weapon_frame(agent: LuaConstant, original: Option<&'static mut *const extern "C" fn()>, replacement: WeaponFrame) {
-    let info = WeaponFrameInfo {
+pub extern "Rust" fn replace_weapon_frame(agent: LuaConstant, original: Option<&'static mut *const extern "C" fn()>, replacement: AgentFrame) {
+    let info = AgentFrameInfo {
         agent,
         original,
         frame: replacement
     };
     let mut weapon_frames = WEAPON_FRAMES.lock();
     weapon_frames.push(info);
+}
+
+#[no_mangle]
+pub extern "Rust" fn replace_agent_frame_main(agent: LuaConstant, is_fighter: bool, original: Option<&'static mut *const extern "C" fn()>, replacement: AgentFrame) {
+    let info = AgentFrameMainInfo {
+        agent,
+        is_fighter,
+        original,
+        frame: replacement
+    };
+    let mut agent_frames_main = AGENT_FRAMES_MAIN.lock();
+    agent_frames_main.push(info);
 }
 
 #[no_mangle]
@@ -287,7 +371,7 @@ pub extern "Rust" fn add_fighter_frame_callback(callback: FighterFrameCallback) 
 }
 
 #[no_mangle]
-pub extern "Rust" fn add_weapon_frame_callback(callback: WeaponFrameCallback) {
+pub extern "Rust" fn add_weapon_frame_callback(callback: AgentFrameCallback) {
     static SHOULD_INSTALL: std::sync::Once = std::sync::Once::new();
     SHOULD_INSTALL.call_once(|| {
         unsafe {
@@ -301,6 +385,20 @@ pub extern "Rust" fn add_weapon_frame_callback(callback: WeaponFrameCallback) {
 }
 
 #[no_mangle]
+pub extern "Rust" fn add_agent_frame_main_callback(callback: AgentFrameCallback) {
+    static SHOULD_INSTALL: std::sync::Once = std::sync::Once::new();
+    SHOULD_INSTALL.call_once(|| {
+        unsafe {
+            SHOULD_INSTALL_AGENT_MAIN_CB = true;
+            if let Some(_) = crate::COMMON_MEMORY_INFO.as_ref() {
+                skyline::install_hook!(agent_frame_main_callbacks);
+            }
+        }
+    });
+    AGENT_FRAME_MAIN_CALLBACKS.lock().push(callback);
+}
+
+#[no_mangle]
 pub extern "Rust" fn add_fighter_init_callback(callback: FighterInit) {
     FIGHTER_INIT_CALLBACKS.lock().push(callback);
 }
@@ -311,9 +409,10 @@ pub extern "Rust" fn add_agent_init_callback(callback: AgentInit) {
 }
 
 fn install() {
-    crate::hooks::replace_symbol("common", "_ZN7lua2cpp16L2CFighterCommon20sys_line_system_initEv", sys_line_system_fighter_init_replace as *const extern "C" fn(), None);
-    crate::hooks::replace_symbol("common", "_ZN7lua2cpp14L2CFighterBase20sys_line_system_initEv", sys_line_system_init_replace as *const extern "C" fn(), None);
     skyline::install_hooks!(
+        sys_line_system_fighter_init_replace,
+        sys_line_system_init_replace,
+        sys_line_status_system_init_replace,
         fighter_reset,
         agent_reset
     );
@@ -324,6 +423,9 @@ fn install() {
         }
         if SHOULD_INSTALL_WEAPON_CB {
             skyline::install_hook!(weapon_frame_callbacks);
+        }
+        if SHOULD_INSTALL_AGENT_MAIN_CB {
+            skyline::install_hook!(agent_frame_main_callbacks);
         }
     }
 }
